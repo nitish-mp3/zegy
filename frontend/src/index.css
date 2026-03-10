@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --zegy-accent: 20 184 156;
+  }
+
+  body {
+    @apply bg-surface text-gray-100;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-700/50 rounded-full hover:bg-gray-600/50;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-white/[0.06] bg-surface-raised;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:border-white/[0.1] hover:bg-surface-overlay;
+  }
+
+  .btn-primary {
+    @apply rounded-xl bg-zegy-600 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-zegy-500 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply rounded-xl border border-white/[0.08] bg-surface-overlay px-4 py-2.5 text-sm text-gray-300 transition-all hover:bg-white/[0.06] hover:text-gray-100;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-white/[0.08] bg-surface-overlay px-4 py-2.5 text-sm text-gray-200 placeholder-gray-500 transition-colors focus:border-zegy-500/50 focus:outline-none focus:ring-1 focus:ring-zegy-500/30;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-medium;
+  }
+
+  .section-title {
+    @apply text-lg font-semibold tracking-tight;
+  }
+
+  .page-title {
+    @apply text-2xl font-bold tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply mt-1 text-sm text-gray-500;
+  }
+}

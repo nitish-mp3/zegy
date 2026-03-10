@@ -1,0 +1,12 @@
+services:
+  zegy:
+    build:
+      context: .
+      target: standalone
+    ports:
+      - "${PORT:-47200}:47200"
+    environment:
+      - HA_URL=${HA_URL}
+      - HA_TOKEN=${HA_TOKEN}
+      - PORT=47200
+    restart: unless-stopped

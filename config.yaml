@@ -1,0 +1,39 @@
+name: Zegy Sensor Manager
+version: 1.0.0
+slug: zegy-sensor-manager
+description: >-
+  Intelligent sensor orchestration for Home Assistant. Real-time monitoring
+  dashboard, interactive floor plan mapping, device health diagnostics, and
+  historical analytics — all from a single ingress panel.
+url: https://github.com/wirsy/zegy
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: services
+boot: auto
+ingress: true
+ingress_port: 47200
+panel_icon: mdi:sensor
+panel_title: Zegy
+watchdog: "http://[HOST]:[PORT:47200]/api/health"
+ports:
+  47200/tcp: null
+ports_description:
+  47200/tcp: Web UI (ingress preferred)
+homeassistant_api: true
+auth_api: true
+hassio_api: true
+init: false
+environment:
+  PORT: "47200"
+map:
+  - config:rw
+options:
+  mqtt_url: ""
+  mqtt_username: ""
+  mqtt_password: ""
+schema:
+  mqtt_url: str
+  mqtt_username: str
+  mqtt_password: password

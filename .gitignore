@@ -1,0 +1,31 @@
+# ── Dependencies ─────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Build outputs ─────────────────────────────────────────────
+backend/dist/
+frontend/dist/
+*.tsbuildinfo
+
+# ── Environment / secrets  (NEVER commit these) ───────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+
+# ── Runtime data (HA mounts /config/zegy at runtime) ─────────
+data/
+/config/
+
+# ── OS & editor noise ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

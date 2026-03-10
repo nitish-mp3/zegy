@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv bashio
+
+bashio::log.info "Starting Zegy Sensor Manager..."
+
+export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
+
+exec node /app/backend/dist/index.js
