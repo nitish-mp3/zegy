@@ -14,6 +14,27 @@ function saveNodes(nodes: SensorNode[]): void {
   saveJson(NODES_FILE, nodes);
 }
 
+/** Auto-create a node entry when MQTT receives from an unknown sensor. */
+export function autoCreateNodeEntry(mqttNodeId: string): SensorNode | null {
+  const nodes = loadNodes();
+  const topic = `zegy/${mqttNodeId}`;
+  if (nodes.some((n) => n.mqttTopic === topic)) return nodes.find((n) => n.mqttTopic === topic)!;
+  const node: SensorNode = {
+    id: `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: mqttNodeId,
+    mqttTopic: topic,
+    x: 4,
+    y: 3,
+    rotation: 0,
+    scale: 2,
+    lastSeen: new Date().toISOString(),
+    status: "online",
+  };
+  nodes.push(node);
+  saveNodes(nodes);
+  return node;
+}
+
 export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/nodes", async (_req, reply) => {
     try {
@@ -42,10 +63,17 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const safeName = (b.name as string).trim();
+      const topic = typeof b.mqttTopic === "string" ? b.mqttTopic : `zegy/${safeName.toLowerCase().replace(/\s+/g, "-")}`;
+
+      const nodes = loadNodes();
+      if (nodes.some((n) => n.mqttTopic === topic)) {
+        return reply.status(409).send({ error: `A node with topic "${topic}" already exists` });
+      }
+
       const node: SensorNode = {
         id: `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: safeName,
-        mqttTopic: typeof b.mqttTopic === "string" ? b.mqttTopic : `zegy/${safeName.toLowerCase().replace(/\s+/g, "-")}`,
+        mqttTopic: topic,
         x: typeof b.x === "number" ? b.x : 400,
         y: typeof b.y === "number" ? b.y : 300,
         rotation: typeof b.rotation === "number" ? b.rotation : 0,
@@ -54,7 +82,6 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
         status: "unknown",
       };
 
-      const nodes = loadNodes();
       nodes.push(node);
       saveNodes(nodes);
       return reply.status(201).send(node);

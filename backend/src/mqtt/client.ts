@@ -10,9 +10,14 @@ const trackListeners = new Set<TrackCallback>();
 const nodeStatusMap = new Map<string, { lastSeen: string; status: "online" | "offline" }>();
 
 let resolveNodes: () => SensorNode[] = () => [];
+let autoCreateNodeFn: ((mqttNodeId: string) => SensorNode | null) | null = null;
 
 export function setNodeResolver(fn: () => SensorNode[]): void {
   resolveNodes = fn;
+}
+
+export function setAutoCreateNode(fn: (mqttNodeId: string) => SensorNode | null): void {
+  autoCreateNodeFn = fn;
 }
 
 export function onTrackFrame(cb: TrackCallback): () => void {
@@ -46,7 +51,13 @@ function handleTrackMessage(
 ): void {
   const nodes = resolveNodes();
   // Match by mqttTopic — accept both "zegy/<id>" (base) and "zegy/<id>/tracks" (full) forms
-  const node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}` || n.mqttTopic === `zegy/${nodeId}/tracks`);
+  let node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}` || n.mqttTopic === `zegy/${nodeId}/tracks`);
+
+  // Auto-discover: create a node entry when an unknown sensor publishes
+  if (!node && autoCreateNodeFn) {
+    node = autoCreateNodeFn(nodeId) ?? undefined;
+    if (node) logger.info({ nodeId, id: node.id }, "Auto-discovered new sensor node");
+  }
   if (!node) return;
 
   nodeStatusMap.set(node.id, { lastSeen: new Date().toISOString(), status: "online" });

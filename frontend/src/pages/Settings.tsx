@@ -171,6 +171,15 @@ function NodesSection() {
     }
   }, []);
 
+  const deleteNode = useCallback(async (id: string) => {
+    try {
+      await api.deleteNode(id);
+      setNodes((prev) => prev.filter((n) => n.id !== id));
+    } catch {
+      alert("Failed to delete node");
+    }
+  }, []);
+
   return (
     <Card>
       <div className="flex items-center gap-3 mb-5">
@@ -204,13 +213,24 @@ function NodesSection() {
                 </div>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <Btn variant="secondary"
-                  disabled={provisioning.has(n.id) || n.status !== "online"}
-                  onClick={() => provision(n.id)}
-                  className="text-xs"
-                >
-                  {provisioning.has(n.id) ? "Sending…" : "Reprovision"}
-                </Btn>
+                <div className="flex items-center gap-2">
+                  <Btn variant="secondary"
+                    disabled={provisioning.has(n.id) || n.status !== "online"}
+                    onClick={() => provision(n.id)}
+                    className="text-xs"
+                  >
+                    {provisioning.has(n.id) ? "Sending…" : "Reprovision"}
+                  </Btn>
+                  <button
+                    onClick={() => deleteNode(n.id)}
+                    className="rounded-lg border border-rose-900/40 bg-rose-950/20 p-2 text-rose-400 hover:bg-rose-950/40 transition-colors"
+                    title="Delete node"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
                 {provisionMsg[n.id] && (
                   <p className="text-[11px] text-teal-400">{provisionMsg[n.id]}</p>
                 )}

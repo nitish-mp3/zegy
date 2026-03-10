@@ -3,6 +3,7 @@ export {
   stopMqtt,
   onTrackFrame,
   setNodeResolver,
+  setAutoCreateNode,
   getNodeStatus,
   publishNodeConfig,
 } from "./client";

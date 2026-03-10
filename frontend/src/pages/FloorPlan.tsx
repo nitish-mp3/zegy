@@ -108,7 +108,7 @@ export default function FloorPlan() {
   const [newNodeName, setNewNodeName] = useState("");
   const [addNodeBusy, setAddNodeBusy] = useState(false);
 
-  const { nodes, create: createNode, refresh: refreshNodes } = useNodes();
+  const { nodes, create: createNode, refresh: refreshNodes, remove: removeNode } = useNodes();
 
   /* Poll node status */
   useEffect(() => {
@@ -119,18 +119,34 @@ export default function FloorPlan() {
   async function handleAddNode() {
     const trimmed = newNodeName.trim();
     if (!trimmed) return;
+    const topic = `zegy/${trimmed.toLowerCase().replace(/\s+/g, "-")}`;
+    if (nodes.some((n) => n.mqttTopic === topic)) {
+      alert(`A node with topic "${topic}" already exists.`);
+      return;
+    }
     setAddNodeBusy(true);
     try {
       await createNode({
         name: trimmed,
-        mqttTopic: `zegy/${trimmed.toLowerCase().replace(/\s+/g, "-")}`,
+        mqttTopic: topic,
         x: roomWidth / 2, y: roomHeight / 2, rotation: 0, scale: 1,
       });
       setNewNodeName("");
       setShowAddNode(false);
       refreshNodes();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to add node";
+      alert(msg);
     } finally {
       setAddNodeBusy(false);
+    }
+  }
+
+  async function handleDeleteNode(id: string) {
+    try {
+      await removeNode(id);
+    } catch {
+      alert("Failed to delete node");
     }
   }
 
@@ -362,7 +378,7 @@ export default function FloorPlan() {
     if (!editZone) return;
     setSaving(true);
     try { await updateZone(editZone.id, editZone); }
-    catch { /* ignore */ }
+    catch { alert("Failed to save zone. Please try again."); }
     finally { setSaving(false); }
   };
 
@@ -371,7 +387,7 @@ export default function FloorPlan() {
     setSaving(true);
     pushUndo("Delete zone");
     try { await removeZone(editZone.id); setSelectedZoneId(null); }
-    catch { /* ignore */ }
+    catch { alert("Failed to delete zone. Please try again."); }
     finally { setSaving(false); }
   };
 
@@ -860,6 +876,15 @@ export default function FloorPlan() {
                       <p className="text-gray-300 truncate">{n.name}</p>
                       <p className="text-[10px] text-gray-600">{n.status}</p>
                     </div>
+                    <button
+                      onClick={() => handleDeleteNode(n.id)}
+                      className="text-gray-700 hover:text-rose-400 transition-colors p-0.5"
+                      title="Delete node"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
                   </div>
                 ))}
               </div>

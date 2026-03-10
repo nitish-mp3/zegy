@@ -38,7 +38,11 @@ export default function Automations() {
   }, [refresh]);
 
   const handleToggle = async (zone: Zone) => {
-    await updateZone(zone.id, { ...zone, enabled: !zone.enabled });
+    try {
+      await updateZone(zone.id, { ...zone, enabled: !zone.enabled });
+    } catch {
+      alert("Failed to toggle zone. Please try again.");
+    }
   };
 
   const stats = useMemo(() => {

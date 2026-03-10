@@ -2,19 +2,44 @@ import { config } from "./config";
 import { logger } from "./logger";
 import { createServer } from "./server";
 import { startHaWebSocket, stopHaWebSocket } from "./ha";
-import { startMqtt, stopMqtt, onTrackFrame, setNodeResolver } from "./mqtt";
+import { startMqtt, stopMqtt, onTrackFrame, setNodeResolver, setAutoCreateNode } from "./mqtt";
 import { processTrackFrame, onZoneEvent } from "./engine";
 import { broadcastEvent } from "./ws";
 import { loadZones } from "./routes/zones";
-import { loadNodes } from "./routes/nodes";
+import { loadNodes, autoCreateNodeEntry } from "./routes/nodes";
+
+async function discoverMqttFromSupervisor(): Promise<void> {
+  if (config.mqtt.url || !config.isAddon) return;
+  try {
+    const resp = await fetch("http://supervisor/services/mqtt", {
+      headers: { Authorization: `Bearer ${config.ha.supervisorToken}` },
+    });
+    if (!resp.ok) return;
+    const json = (await resp.json()) as {
+      data?: { host?: string; port?: number; username?: string; password?: string };
+    };
+    const mqtt = json.data;
+    if (!mqtt?.host) return;
+    config.mqtt.url = `mqtt://${mqtt.host}:${mqtt.port ?? 1883}`;
+    config.mqtt.username = mqtt.username ?? "";
+    config.mqtt.password = mqtt.password ?? "";
+    logger.info({ url: config.mqtt.url }, "Auto-discovered MQTT broker from Supervisor");
+  } catch {
+    logger.debug("Could not auto-discover MQTT from Supervisor");
+  }
+}
 
 async function main(): Promise<void> {
   const app = await createServer();
 
   startHaWebSocket();
 
+  // Auto-discover MQTT broker from HA Supervisor if not configured
+  await discoverMqttFromSupervisor();
+
   // Wire MQTT → zone engine → WebSocket → HA actions
   setNodeResolver(loadNodes);
+  setAutoCreateNode(autoCreateNodeEntry);
 
   onTrackFrame((frame) => {
     broadcastEvent("track_update", {

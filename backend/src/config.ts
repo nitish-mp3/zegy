@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { logger } from "./logger";
 
 interface AppConfig {
@@ -17,6 +18,21 @@ interface AppConfig {
   isAddon: boolean;
 }
 
+function readJsonFile(filePath: string): Record<string, unknown> {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function firstNonEmpty(...values: (unknown)[]): string {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
 function resolveConfig(): AppConfig {
   const supervisorToken = process.env.SUPERVISOR_TOKEN ?? "";
   const isAddon = !!supervisorToken;
@@ -25,6 +41,10 @@ function resolveConfig(): AppConfig {
   const supervisorUrl = isAddon ? "http://supervisor" : haUrl;
 
   const wsBase = supervisorUrl.replace(/^http/, "ws");
+
+  // MQTT config priority: env vars → addon options → saved settings
+  const addonOpts = readJsonFile("/data/options.json");
+  const savedSettings = readJsonFile("/config/zegy/settings.json");
 
   return {
     port: parseInt(process.env.PORT ?? "47200", 10),
@@ -38,9 +58,21 @@ function resolveConfig(): AppConfig {
         : `${wsBase}/api/websocket`,
     },
     mqtt: {
-      url: process.env.MQTT_URL ?? "",
-      username: process.env.MQTT_USERNAME ?? "",
-      password: process.env.MQTT_PASSWORD ?? "",
+      url: firstNonEmpty(
+        process.env.MQTT_URL,
+        addonOpts.mqtt_url,
+        savedSettings.mqttUrl,
+      ),
+      username: firstNonEmpty(
+        process.env.MQTT_USERNAME,
+        addonOpts.mqtt_username,
+        savedSettings.mqttUsername,
+      ),
+      password: firstNonEmpty(
+        process.env.MQTT_PASSWORD,
+        addonOpts.mqtt_password,
+        savedSettings.mqttPassword,
+      ),
     },
     isAddon,
   };
