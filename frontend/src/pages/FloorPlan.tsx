@@ -48,7 +48,6 @@ interface UndoEntry { zones: Zone[]; description: string }
 
 export default function FloorPlan() {
   const { zones, loading: zonesLoading, refresh: refreshZones, create: createZone, update: updateZone, remove: removeZone, setZones } = useZones();
-  const { nodes } = useNodes();
   const { devices } = useDevices();
 
   /* Canvas state */
@@ -103,6 +102,31 @@ export default function FloorPlan() {
 
   /* Side panel tab */
   const [panelTab, setPanelTab] = useState<"zones" | "calibration" | "settings">("zones");
+
+  /* Add-node form */
+  const [showAddNode, setShowAddNode] = useState(false);
+  const [newNodeName, setNewNodeName] = useState("");
+  const [addNodeBusy, setAddNodeBusy] = useState(false);
+
+  const { nodes, create: createNode, refresh: refreshNodes } = useNodes();
+
+  async function handleAddNode() {
+    const trimmed = newNodeName.trim();
+    if (!trimmed) return;
+    setAddNodeBusy(true);
+    try {
+      await createNode({
+        name: trimmed,
+        mqttTopic: `zegy/${trimmed.toLowerCase().replace(/\s+/g, "-")}`,
+        x: 0, y: 0, rotation: 0, scale: 1,
+      });
+      setNewNodeName("");
+      setShowAddNode(false);
+      refreshNodes();
+    } finally {
+      setAddNodeBusy(false);
+    }
+  }
 
   /* Mobile sidebar */
   const [showMobileSide, setShowMobileSide] = useState(false);
@@ -794,20 +818,46 @@ export default function FloorPlan() {
         )}
 
         {/* Sensor Nodes */}
-        {!selectedZoneId && !showNewZoneForm && nodes.length > 0 && (
+        {!selectedZoneId && !showNewZoneForm && (
           <div className="card p-3 animate-fade-in">
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-600">Sensor Nodes ({nodes.length})</h3>
-            <div className="space-y-1">
-              {nodes.map((n) => (
-                <div key={n.id} className="flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs">
-                  <span className={`h-2 w-2 rounded-full ${n.status === "online" ? "bg-zegy-400" : n.status === "offline" ? "bg-rose-400" : "bg-gray-600"}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-gray-300 truncate">{n.name}</p>
-                    <p className="text-[10px] text-gray-600">{n.status}</p>
-                  </div>
-                </div>
-              ))}
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-medium uppercase tracking-wider text-gray-600">Sensor Nodes {nodes.length > 0 && `(${nodes.length})`}</h3>
+              <button onClick={() => setShowAddNode((v) => !v)} className="text-xs text-zegy-400 hover:text-zegy-300 transition-colors">+ Add</button>
             </div>
+
+            {showAddNode && (
+              <div className="mb-2 flex gap-1.5">
+                <input
+                  autoFocus
+                  value={newNodeName}
+                  onChange={(e) => setNewNodeName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddNode(); if (e.key === "Escape") setShowAddNode(false); }}
+                  placeholder="e.g. studyroom"
+                  className="flex-1 rounded-lg bg-white/[0.06] px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-600 outline-none focus:ring-1 focus:ring-zegy-500"
+                />
+                <button onClick={handleAddNode} disabled={addNodeBusy || !newNodeName.trim()} className="rounded-lg bg-zegy-600 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-40">
+                  {addNodeBusy ? "…" : "Add"}
+                </button>
+              </div>
+            )}
+
+            {nodes.length === 0 && !showAddNode && (
+              <p className="text-[11px] text-gray-600">No nodes yet. Click + Add and enter your node ID (e.g. <span className="text-gray-400">studyroom</span>).</p>
+            )}
+
+            {nodes.length > 0 && (
+              <div className="space-y-1">
+                {nodes.map((n) => (
+                  <div key={n.id} className="flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs">
+                    <span className={`h-2 w-2 rounded-full ${n.status === "online" ? "bg-zegy-400" : n.status === "offline" ? "bg-rose-400" : "bg-gray-600"}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-gray-300 truncate">{n.name}</p>
+                      <p className="text-[10px] text-gray-600">{n.status}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

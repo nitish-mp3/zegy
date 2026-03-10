@@ -186,7 +186,7 @@ function NodesSection() {
       </div>
 
       {nodes.length === 0 ? (
-        <p className="text-sm text-zinc-500">No nodes added yet. Go to <strong className="text-zinc-300">Floor Plan</strong> to add one.</p>
+        <p className="text-sm text-zinc-500">No nodes added yet. Go to <a href="/floorplan" className="font-semibold text-zegy-400 hover:underline">Floor Plan</a> to add one.</p>
       ) : (
         <div className="space-y-3">
           {nodes.map((n) => (
