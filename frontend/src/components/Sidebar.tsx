@@ -20,7 +20,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
     <>
       <div className="flex h-16 items-center gap-3 px-5">
         <img
-          src={`${import.meta.env.BASE_URL}logo.png`}
+          src="./logo.png"
           alt="Zegy"
           className="h-9 w-9 rounded-xl shadow-lg shadow-zegy-600/20"
         />
