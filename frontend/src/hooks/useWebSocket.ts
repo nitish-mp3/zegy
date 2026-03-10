@@ -10,6 +10,9 @@ export function useWebSocket() {
       if (data.type === "connected") {
         dispatch({ type: "SET_CONNECTED", payload: true });
       }
+      if (data.type === "disconnected") {
+        dispatch({ type: "SET_CONNECTED", payload: false });
+      }
 
       if (data.type === "state_changed") {
         dispatch({

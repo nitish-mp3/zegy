@@ -32,6 +32,7 @@ function connect(): void {
 
   socket.onclose = () => {
     socket = null;
+    for (const h of handlers) h({ type: "disconnected" });
     scheduleReconnect();
   };
 

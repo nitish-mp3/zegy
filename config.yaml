@@ -1,5 +1,5 @@
 name: Zegy Sensor Manager
-version: 1.0.4
+version: 1.0.5
 slug: zegy-sensor-manager
 description: >-
   Intelligent sensor orchestration for Home Assistant. Real-time monitoring

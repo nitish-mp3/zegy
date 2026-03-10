@@ -82,17 +82,19 @@ function polygonCenter(pts: ZonePoint[]): ZonePoint {
   return { x: cx, y: cy };
 }
 
-function buildCoveragePath(node: SensorNodeMarker): string {
-  const r = node.status === "online" ? 80 : 50;
+function buildCoveragePath(node: SensorNodeMarker, scale: number): string {
+  const r = (node.status === "online" ? 0.8 : 0.5) * scale;
   const halfAngle = 55;
   const dir = node.rotation - 90;
   const a1 = ((dir - halfAngle) * Math.PI) / 180;
   const a2 = ((dir + halfAngle) * Math.PI) / 180;
-  const x1 = node.x + r * Math.cos(a1);
-  const y1 = node.y + r * Math.sin(a1);
-  const x2 = node.x + r * Math.cos(a2);
-  const y2 = node.y + r * Math.sin(a2);
-  return `M ${node.x} ${node.y} L ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2} Z`;
+  const cx = node.x * scale;
+  const cy = node.y * scale;
+  const x1 = cx + r * Math.cos(a1);
+  const y1 = cy + r * Math.sin(a1);
+  const x2 = cx + r * Math.cos(a2);
+  const y2 = cy + r * Math.sin(a2);
+  return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2} Z`;
 }
 
 const TRACK_COLORS = ["#f59e0b", "#3b82f6", "#ef4444", "#a855f7", "#06b6d4", "#f97316"];
@@ -283,7 +285,7 @@ export default function ZoneCanvas({
           const stroke = node.status === "online" ? "#2dd4b4" : node.status === "offline" ? "#ef4444" : "#6b7280";
           return (
             <g key={`cov-${node.id}`} className="pointer-events-none">
-              <path d={buildCoveragePath(node)} fill={stroke} fillOpacity={0.10} stroke={stroke} strokeOpacity={0.20} strokeWidth="1" />
+              <path d={buildCoveragePath(node, SCALE)} fill={stroke} fillOpacity={0.10} stroke={stroke} strokeOpacity={0.20} strokeWidth="1" />
             </g>
           );
         })}
@@ -399,15 +401,16 @@ export default function ZoneCanvas({
         {/* Sensor node markers */}
         {sensorNodes.map((node) => {
           const color = node.status === "online" ? "#14b89c" : node.status === "offline" ? "#ef4444" : "#6b7280";
+          const s = r2s(node.x, node.y);
           return (
             <g key={node.id}>
-              <g transform={`translate(${node.x}, ${node.y}) rotate(${node.rotation})`}>
+              <g transform={`translate(${s.x}, ${s.y}) rotate(${node.rotation})`}>
                 <polygon points="0,-16 -5,-8 5,-8" fill={color} opacity={0.6} />
               </g>
-              <circle cx={node.x} cy={node.y} r="9" fill="#1c202d" stroke={color} strokeWidth="2" />
-              <text x={node.x} y={node.y} textAnchor="middle" dominantBaseline="central" fill="white" fontSize="7" fontWeight="700" className="pointer-events-none select-none">S</text>
+              <circle cx={s.x} cy={s.y} r="9" fill="#1c202d" stroke={color} strokeWidth="2" />
+              <text x={s.x} y={s.y} textAnchor="middle" dominantBaseline="central" fill="white" fontSize="7" fontWeight="700" className="pointer-events-none select-none">S</text>
               {showLabels && (
-                <text x={node.x} y={node.y + 18} textAnchor="middle" dominantBaseline="hanging" fill="#9ca3af" fontSize="9" className="pointer-events-none select-none">{node.name}</text>
+                <text x={s.x} y={s.y + 18} textAnchor="middle" dominantBaseline="hanging" fill="#9ca3af" fontSize="9" className="pointer-events-none select-none">{node.name}</text>
               )}
             </g>
           );

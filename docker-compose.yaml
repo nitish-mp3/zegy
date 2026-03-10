@@ -8,5 +8,8 @@ services:
     environment:
       - HA_URL=${HA_URL}
       - HA_TOKEN=${HA_TOKEN}
+      - MQTT_URL=${MQTT_URL:-mqtt://localhost:1883}
+      - MQTT_USERNAME=${MQTT_USERNAME:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
       - PORT=47200
     restart: unless-stopped

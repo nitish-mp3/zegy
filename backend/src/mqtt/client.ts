@@ -45,8 +45,8 @@ function handleTrackMessage(
   data: { presence?: boolean; targets?: { id: number; x: number; y: number; speed: number }[] },
 ): void {
   const nodes = resolveNodes();
-  // Match by mqttTopic (e.g. "zegy/radar-01/tracks") — NOT by the internal auto-generated id
-  const node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}/tracks`);
+  // Match by mqttTopic — accept both "zegy/<id>" (base) and "zegy/<id>/tracks" (full) forms
+  const node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}` || n.mqttTopic === `zegy/${nodeId}/tracks`);
   if (!node) return;
 
   nodeStatusMap.set(node.id, { lastSeen: new Date().toISOString(), status: "online" });
@@ -70,7 +70,7 @@ function handleStatusMessage(nodeId: string, data: { status?: string }): void {
   const status = data.status === "online" ? "online" as const : "offline" as const;
   // Resolve internal node id from the MQTT topic nodeId so the status lookup in /api/nodes works
   const nodes = resolveNodes();
-  const node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}/tracks`);
+  const node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}` || n.mqttTopic === `zegy/${nodeId}/tracks`);
   const mapKey = node ? node.id : nodeId;
   nodeStatusMap.set(mapKey, { lastSeen: new Date().toISOString(), status });
 }

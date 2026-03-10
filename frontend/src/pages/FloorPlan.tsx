@@ -110,6 +110,12 @@ export default function FloorPlan() {
 
   const { nodes, create: createNode, refresh: refreshNodes } = useNodes();
 
+  /* Poll node status */
+  useEffect(() => {
+    const timer = window.setInterval(refreshNodes, 10000);
+    return () => window.clearInterval(timer);
+  }, [refreshNodes]);
+
   async function handleAddNode() {
     const trimmed = newNodeName.trim();
     if (!trimmed) return;
@@ -118,7 +124,7 @@ export default function FloorPlan() {
       await createNode({
         name: trimmed,
         mqttTopic: `zegy/${trimmed.toLowerCase().replace(/\s+/g, "-")}`,
-        x: 0, y: 0, rotation: 0, scale: 1,
+        x: roomWidth / 2, y: roomHeight / 2, rotation: 0, scale: 1,
       });
       setNewNodeName("");
       setShowAddNode(false);
