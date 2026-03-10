@@ -2,8 +2,8 @@ type MessageHandler = (data: Record<string, unknown>) => void;
 
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 1000;
-const MAX_RECONNECT_DELAY = 15000;
+let reconnectDelay = 500;
+const MAX_RECONNECT_DELAY = 8000;
 const handlers = new Set<MessageHandler>();
 
 function getWsUrl(): string {
@@ -19,7 +19,7 @@ function connect(): void {
   socket = new WebSocket(getWsUrl());
 
   socket.onopen = () => {
-    reconnectDelay = 1000;
+    reconnectDelay = 500;
     socket?.send(JSON.stringify({ action: "subscribe_all" }));
   };
 

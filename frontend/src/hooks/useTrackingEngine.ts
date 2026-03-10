@@ -29,10 +29,10 @@ interface TrackedTarget {
   opacity: number;
 }
 
-const LERP_FACTOR = 0.22;
-const TARGET_TIMEOUT_MS = 3000;
-const FADE_MS = 1500;
-const MAX_JUMP_M = 2.5;
+const LERP_FACTOR = 0.25;
+const TARGET_TIMEOUT_MS = 8000;
+const FADE_MS = 2000;
+const MAX_JUMP_M = 4.0;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;

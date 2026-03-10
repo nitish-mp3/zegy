@@ -10,7 +10,10 @@ const trackListeners = new Set<TrackCallback>();
 const nodeStatusMap = new Map<string, { lastSeen: string; status: "online" | "offline" }>();
 const latestTargets = new Map<string, TrackTarget[]>();
 let staleTimer: ReturnType<typeof setInterval> | null = null;
-const NODE_STALE_MS = 30_000;
+const NODE_STALE_MS = 120_000;
+
+// Track the MQTT nodeId ↔ internal node.id mapping for stale cleanup
+const nodeIdToMqttId = new Map<string, string>();
 
 let resolveNodes: () => SensorNode[] = () => [];
 let autoCreateNodeFn: ((mqttNodeId: string) => SensorNode | null) | null = null;
@@ -68,6 +71,7 @@ function handleTrackMessage(
   if (!node) return;
 
   nodeStatusMap.set(node.id, { lastSeen: new Date().toISOString(), status: "online" });
+  nodeIdToMqttId.set(node.id, nodeId);
 
   const rawTargets = Array.isArray(data.targets) ? data.targets : [];
   const targets = transformTargets(rawTargets, node);
@@ -106,8 +110,9 @@ export function startMqtt(): void {
     username: config.mqtt.username || undefined,
     password: config.mqtt.password || undefined,
     clientId: `zegy-${Date.now()}`,
-    reconnectPeriod: 5000,
-    keepalive: 30,
+    reconnectPeriod: 3000,
+    keepalive: 60,
+    connectTimeout: 10_000,
   });
 
   client.on("connect", () => {
@@ -139,12 +144,20 @@ export function startMqtt(): void {
     }
   });
 
+  client.on("reconnect", () => {
+    logger.info("MQTT reconnecting...");
+  });
+
   client.on("error", (err: Error) => {
     logger.error({ err }, "MQTT error");
   });
 
   client.on("offline", () => {
     logger.warn("MQTT offline, will reconnect...");
+  });
+
+  client.on("close", () => {
+    logger.warn("MQTT connection closed");
   });
 
   startStaleDetection();
@@ -158,12 +171,14 @@ function startStaleDetection(): void {
         const lastMs = new Date(entry.lastSeen).getTime();
         if (now - lastMs > NODE_STALE_MS) {
           entry.status = "offline";
-          latestTargets.delete(id);
-          logger.info({ nodeId: id }, "Node marked offline (stale)");
+          // Clean up latestTargets using the correct MQTT nodeId key
+          const mqttId = nodeIdToMqttId.get(id);
+          if (mqttId) latestTargets.delete(mqttId);
+          logger.info({ nodeId: id }, "Node marked offline (no data for 2 min)");
         }
       }
     }
-  }, 10_000);
+  }, 30_000);
 }
 
 export function stopMqtt(): void {

@@ -7,7 +7,6 @@ import { logger } from "../logger";
 interface ClientSocket {
   ws: WsSocket;
   subscriptions: Set<string>;
-  alive: boolean;
 }
 
 const clients = new Set<ClientSocket>();
@@ -44,23 +43,26 @@ export function broadcastEvent(type: string, data: Record<string, unknown>): voi
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {
   onStateChanged(broadcast);
 
-  // Ping all clients every 25s; drop unresponsive ones
+  // Application-level heartbeat every 45s (longer to avoid ingress proxy issues)
   const pingInterval = setInterval(() => {
+    const heartbeat = JSON.stringify({ type: "heartbeat", timestamp: new Date().toISOString() });
     for (const client of clients) {
-      if (!client.alive) {
-        client.ws.terminate();
+      if (client.ws.readyState !== 1) {
         clients.delete(client);
         continue;
       }
-      client.alive = false;
-      client.ws.ping();
+      try {
+        client.ws.send(heartbeat);
+      } catch {
+        clients.delete(client);
+      }
     }
-  }, 25_000);
+  }, 45_000);
 
   app.addHook("onClose", () => clearInterval(pingInterval));
 
   app.get("/api/ws", { websocket: true }, (socket) => {
-    const client: ClientSocket = { ws: socket, subscriptions: new Set(), alive: true };
+    const client: ClientSocket = { ws: socket, subscriptions: new Set() };
     clients.add(client);
 
     logger.info(`WebSocket client connected (total: ${clients.size})`);
@@ -77,8 +79,6 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
         timestamp: new Date().toISOString(),
       }));
     }
-
-    socket.on("pong", () => { client.alive = true; });
 
     socket.on("message", (raw) => {
       let msg: { action?: string; entities?: string[] };
