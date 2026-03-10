@@ -33,7 +33,9 @@ function resolveConfig(): AppConfig {
     ha: {
       supervisorUrl,
       supervisorToken: isAddon ? supervisorToken : (process.env.HA_TOKEN ?? ""),
-      websocketUrl: `${wsBase}/api/websocket`,
+      websocketUrl: isAddon
+        ? `${wsBase}/core/websocket`
+        : `${wsBase}/api/websocket`,
     },
     mqtt: {
       url: process.env.MQTT_URL ?? "",

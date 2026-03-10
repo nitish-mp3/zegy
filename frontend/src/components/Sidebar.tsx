@@ -19,9 +19,11 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <>
       <div className="flex h-16 items-center gap-3 px-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-zegy-400 to-zegy-600 text-sm font-bold text-white shadow-lg shadow-zegy-600/20">
-          Z
-        </div>
+        <img
+          src={`${import.meta.env.BASE_URL}logo.png`}
+          alt="Zegy"
+          className="h-9 w-9 rounded-xl shadow-lg shadow-zegy-600/20"
+        />
         <div>
           <span className="text-base font-semibold tracking-tight">Zegy</span>
           <p className="text-[10px] text-gray-500">Sensor Intelligence</p>

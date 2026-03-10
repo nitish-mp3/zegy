@@ -1,4 +1,9 @@
-const BASE = "";
+function detectBase(): string {
+  const m = window.location.pathname.match(/^\/api\/hassio_ingress\/[^/]+/);
+  return m ? m[0] : "";
+}
+
+const BASE = detectBase();
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

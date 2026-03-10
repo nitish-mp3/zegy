@@ -6,7 +6,9 @@ const handlers = new Set<MessageHandler>();
 
 function getWsUrl(): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/api/ws`;
+  const m = location.pathname.match(/^\/api\/hassio_ingress\/[^/]+/);
+  const base = m ? m[0] : "";
+  return `${proto}//${location.host}${base}/api/ws`;
 }
 
 function connect(): void {
