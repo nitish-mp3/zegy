@@ -1,11 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket as WsSocket } from "ws";
 import { onStateChanged } from "../ha/subscriber";
+import { getLatestTargets } from "../mqtt";
 import { logger } from "../logger";
 
 interface ClientSocket {
   ws: WsSocket;
   subscriptions: Set<string>;
+  alive: boolean;
 }
 
 const clients = new Set<ClientSocket>();
@@ -42,13 +44,41 @@ export function broadcastEvent(type: string, data: Record<string, unknown>): voi
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {
   onStateChanged(broadcast);
 
+  // Ping all clients every 25s; drop unresponsive ones
+  const pingInterval = setInterval(() => {
+    for (const client of clients) {
+      if (!client.alive) {
+        client.ws.terminate();
+        clients.delete(client);
+        continue;
+      }
+      client.alive = false;
+      client.ws.ping();
+    }
+  }, 25_000);
+
+  app.addHook("onClose", () => clearInterval(pingInterval));
+
   app.get("/api/ws", { websocket: true }, (socket) => {
-    const client: ClientSocket = { ws: socket, subscriptions: new Set() };
+    const client: ClientSocket = { ws: socket, subscriptions: new Set(), alive: true };
     clients.add(client);
 
     logger.info(`WebSocket client connected (total: ${clients.size})`);
 
     socket.send(JSON.stringify({ type: "connected", timestamp: new Date().toISOString() }));
+
+    // Push cached tracking data so the frontend doesn't start empty
+    for (const [nodeId, targets] of getLatestTargets()) {
+      socket.send(JSON.stringify({
+        type: "track_update",
+        nodeId,
+        presence: targets.length > 0,
+        targets,
+        timestamp: new Date().toISOString(),
+      }));
+    }
+
+    socket.on("pong", () => { client.alive = true; });
 
     socket.on("message", (raw) => {
       let msg: { action?: string; entities?: string[] };

@@ -2,6 +2,8 @@ type MessageHandler = (data: Record<string, unknown>) => void;
 
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectDelay = 1000;
+const MAX_RECONNECT_DELAY = 15000;
 const handlers = new Set<MessageHandler>();
 
 function getWsUrl(): string {
@@ -12,11 +14,12 @@ function getWsUrl(): string {
 }
 
 function connect(): void {
-  if (socket?.readyState === WebSocket.OPEN) return;
+  if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
 
   socket = new WebSocket(getWsUrl());
 
   socket.onopen = () => {
+    reconnectDelay = 1000;
     socket?.send(JSON.stringify({ action: "subscribe_all" }));
   };
 
@@ -46,7 +49,21 @@ function scheduleReconnect(): void {
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
-  }, 3000);
+    reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+  }, reconnectDelay);
+}
+
+// Reconnect when tab becomes visible again
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && handlers.size > 0) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        reconnectDelay = 500;
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        connect();
+      }
+    }
+  });
 }
 
 export function subscribe(handler: MessageHandler): () => void {

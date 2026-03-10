@@ -15,6 +15,7 @@ import {
   type AffineParams,
 } from "../utils/calibration";
 import ZoneCanvas, { type EditorMode, type ZonePoint } from "../components/ZoneCanvas";
+import { useTrackingEngine } from "../hooks/useTrackingEngine";
 
 /* ---- Constants ---- */
 
@@ -40,7 +41,7 @@ function getServicesForEntity(entityId: string): string[] {
 
 /* ---- Types ---- */
 
-interface TrackTarget { id: number; x: number; y: number; speed: number }
+interface TrackTarget { id: number; x: number; y: number; speed: number; opacity?: number; stale?: boolean; nodeId?: string }
 interface TrackHistoryPoint { id: string; x: number; y: number; ageMs: number }
 interface UndoEntry { zones: Zone[]; description: string }
 
@@ -69,7 +70,8 @@ export default function FloorPlan() {
   const [showLabels, setShowLabels] = useState(true);
 
   /* Live tracking */
-  const [trackTargets, setTrackTargets] = useState<TrackTarget[]>([]);
+  const { targets: smoothedTargets, ingestFrame } = useTrackingEngine();
+  const trackTargets: TrackTarget[] = smoothedTargets;
   const [trackHistory, setTrackHistory] = useState<TrackHistoryPoint[]>([]);
 
   /* Calibration */
@@ -157,8 +159,9 @@ export default function FloorPlan() {
   useEffect(() => {
     const unsub = subscribe((data) => {
       if (data.type === "track_update") {
+        const nodeId = (data.nodeId ?? "unknown") as string;
         const targets = (data.targets ?? []) as TrackTarget[];
-        setTrackTargets(targets);
+        ingestFrame(nodeId, targets);
         if (showMotionHistory && targets.length > 0) {
           setTrackHistory((prev) => [
             ...targets.map((t) => ({ id: `${t.id}-${Date.now()}`, x: t.x, y: t.y, ageMs: 0 })),
@@ -168,7 +171,8 @@ export default function FloorPlan() {
       }
       if (data.type === "zone_event") {
         const zoneId = data.zoneId as string;
-        const evtType = data.eventType as string;  // backend sends eventType: "enter"|"exit"
+        const evtType = data.eventType as string;
+        const targetCount = (data.targetCount ?? 0) as number;
         if (mode === "validate") {
           setTriggeredZoneIds((prev) => {
             const next = new Set(prev);
@@ -177,11 +181,18 @@ export default function FloorPlan() {
             return next;
           });
         }
-        refreshZones();
+        // Update zone state locally instead of re-fetching from API
+        setZones((prev) =>
+          prev.map((z) =>
+            z.id === zoneId
+              ? { ...z, state: { occupied: evtType === "enter", targetCount } }
+              : z,
+          ),
+        );
       }
     });
     return unsub;
-  }, [refreshZones, showMotionHistory, mode]);
+  }, [ingestFrame, showMotionHistory, mode, setZones]);
 
   /* Motion history aging */
   useEffect(() => {

@@ -8,6 +8,9 @@ type TrackCallback = (frame: TrackFrame) => void;
 let client: mqtt.MqttClient | null = null;
 const trackListeners = new Set<TrackCallback>();
 const nodeStatusMap = new Map<string, { lastSeen: string; status: "online" | "offline" }>();
+const latestTargets = new Map<string, TrackTarget[]>();
+let staleTimer: ReturnType<typeof setInterval> | null = null;
+const NODE_STALE_MS = 30_000;
 
 let resolveNodes: () => SensorNode[] = () => [];
 let autoCreateNodeFn: ((mqttNodeId: string) => SensorNode | null) | null = null;
@@ -27,6 +30,10 @@ export function onTrackFrame(cb: TrackCallback): () => void {
 
 export function getNodeStatus(): Map<string, { lastSeen: string; status: "online" | "offline" }> {
   return nodeStatusMap;
+}
+
+export function getLatestTargets(): Map<string, TrackTarget[]> {
+  return latestTargets;
 }
 
 function transformTargets(
@@ -64,6 +71,7 @@ function handleTrackMessage(
 
   const rawTargets = Array.isArray(data.targets) ? data.targets : [];
   const targets = transformTargets(rawTargets, node);
+  latestTargets.set(nodeId, targets);
 
   const frame: TrackFrame = {
     nodeId,
@@ -99,6 +107,7 @@ export function startMqtt(): void {
     password: config.mqtt.password || undefined,
     clientId: `zegy-${Date.now()}`,
     reconnectPeriod: 5000,
+    keepalive: 30,
   });
 
   client.on("connect", () => {
@@ -137,12 +146,31 @@ export function startMqtt(): void {
   client.on("offline", () => {
     logger.warn("MQTT offline, will reconnect...");
   });
+
+  startStaleDetection();
+}
+
+function startStaleDetection(): void {
+  staleTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [id, entry] of nodeStatusMap) {
+      if (entry.status === "online") {
+        const lastMs = new Date(entry.lastSeen).getTime();
+        if (now - lastMs > NODE_STALE_MS) {
+          entry.status = "offline";
+          latestTargets.delete(id);
+          logger.info({ nodeId: id }, "Node marked offline (stale)");
+        }
+      }
+    }
+  }, 10_000);
 }
 
 export function stopMqtt(): void {
   client?.end(true);
   client = null;
   trackListeners.clear();
+  if (staleTimer) { clearInterval(staleTimer); staleTimer = null; }
 }
 
 export function publishNodeConfig(nodeId: string, payload: Record<string, unknown>): void {

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, memo } from "react";
 import { snapToGrid } from "../utils/calibration";
 import type { AffineParams, CalibrationPoint } from "../utils/calibration";
 
@@ -23,6 +23,9 @@ export interface TrackTarget {
   x: number;
   y: number;
   speed: number;
+  opacity?: number;
+  stale?: boolean;
+  nodeId?: string;
 }
 
 export interface TrackHistoryPoint {
@@ -83,8 +86,8 @@ function polygonCenter(pts: ZonePoint[]): ZonePoint {
 }
 
 function buildCoveragePath(node: SensorNodeMarker, scale: number): string {
-  const r = (node.status === "online" ? 0.8 : 0.5) * scale;
-  const halfAngle = 55;
+  const r = (node.status === "online" ? 5.0 : 3.0) * scale;
+  const halfAngle = 60;
   const dir = node.rotation - 90;
   const a1 = ((dir - halfAngle) * Math.PI) / 180;
   const a2 = ((dir + halfAngle) * Math.PI) / 180;
@@ -97,11 +100,26 @@ function buildCoveragePath(node: SensorNodeMarker, scale: number): string {
   return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2} Z`;
 }
 
+function buildDistanceRings(node: SensorNodeMarker, scale: number): React.ReactNode[] {
+  const cx = node.x * scale;
+  const cy = node.y * scale;
+  const rings = [1, 2, 3, 4];
+  return rings.map((d) => {
+    const r = d * scale;
+    return (
+      <g key={`ring-${node.id}-${d}`}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#2dd4b4" strokeWidth="0.5" strokeDasharray="4 6" opacity={0.12} />
+        <text x={cx + r + 3} y={cy - 3} fill="#2dd4b4" fontSize="7" opacity={0.2} className="select-none pointer-events-none">{d}m</text>
+      </g>
+    );
+  });
+}
+
 const TRACK_COLORS = ["#f59e0b", "#3b82f6", "#ef4444", "#a855f7", "#06b6d4", "#f97316"];
 
 /* Component */
 
-export default function ZoneCanvas({
+export default memo(function ZoneCanvas({
   roomWidth,
   roomHeight,
   gridStep,
@@ -259,6 +277,14 @@ export default function ZoneCanvas({
         </div>
       )}
 
+      {/* Live target count badge */}
+      {trackTargets.length > 0 && (
+        <div className="absolute left-2 bottom-2 z-10 flex items-center gap-1.5 rounded-lg bg-surface/90 px-2 py-1 text-[10px] text-gray-400 backdrop-blur-sm border border-white/[0.06]">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+          {trackTargets.length} target{trackTargets.length !== 1 ? "s" : ""} tracked
+        </div>
+      )}
+
       <svg ref={svgRef} viewBox={`0 0 ${vw} ${vh}`} className="w-full h-full select-none" style={{ cursor }}
         onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
         {/* Background */}
@@ -280,12 +306,13 @@ export default function ZoneCanvas({
         <text x={22} y={5} fill="#ef4444" fontSize="8" opacity={0.6} className="select-none pointer-events-none">X</text>
         <text x={4} y={28} fill="#22c55e" fontSize="8" opacity={0.6} className="select-none pointer-events-none">Y</text>
 
-        {/* Sensor coverage cones */}
+        {/* Sensor coverage cones + distance rings */}
         {showCoverage && sensorNodes.map((node) => {
           const stroke = node.status === "online" ? "#2dd4b4" : node.status === "offline" ? "#ef4444" : "#6b7280";
           return (
             <g key={`cov-${node.id}`} className="pointer-events-none">
-              <path d={buildCoveragePath(node, SCALE)} fill={stroke} fillOpacity={0.10} stroke={stroke} strokeOpacity={0.20} strokeWidth="1" />
+              {node.status === "online" && buildDistanceRings(node, SCALE)}
+              <path d={buildCoveragePath(node, SCALE)} fill={stroke} fillOpacity={0.06} stroke={stroke} strokeOpacity={0.25} strokeWidth="1" />
             </g>
           );
         })}
@@ -420,17 +447,43 @@ export default function ZoneCanvas({
         {trackTargets.map((t, i) => {
           const s = r2s(t.x, t.y);
           const color = TRACK_COLORS[i % TRACK_COLORS.length];
+          const alpha = t.opacity ?? 1;
+          const isStale = t.stale ?? false;
+          const speedKm = t.speed * 3.6;
           return (
-            <g key={`track-${t.id}`}>
-              <circle cx={s.x} cy={s.y} r="12" fill="none" stroke={color} strokeWidth="1" opacity="0.3">
-                <animate attributeName="r" values="8;16;8" dur="2s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="0.4;0.05;0.4" dur="2s" repeatCount="indefinite" />
-              </circle>
-              <circle cx={s.x} cy={s.y} r="5" fill={color} fillOpacity={0.85} stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" style={{ transition: "cx 120ms linear, cy 120ms linear" }} />
+            <g key={`track-${t.nodeId ?? "?"}-${t.id}`} opacity={alpha}>
+              {/* Outer pulse ring */}
+              {!isStale && (
+                <circle cx={s.x} cy={s.y} r="12" fill="none" stroke={color} strokeWidth="1" opacity="0.3">
+                  <animate attributeName="r" values="8;18;8" dur="2.2s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.35;0.03;0.35" dur="2.2s" repeatCount="indefinite" />
+                </circle>
+              )}
+              {/* Detection range ring */}
+              <circle cx={s.x} cy={s.y} r="18" fill="none" stroke={color} strokeWidth="0.5" strokeDasharray="3 3" opacity={0.15} />
+              {/* Main dot — uses transform for GPU positioning */}
+              <circle cx={s.x} cy={s.y} r={isStale ? 4 : 6} fill={color} fillOpacity={isStale ? 0.4 : 0.9} stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" />
+              {/* Speed indicator arrow */}
+              {t.speed > 0.1 && !isStale && (
+                <line
+                  x1={s.x} y1={s.y}
+                  x2={s.x + Math.min(t.speed * 12, 25)} y2={s.y}
+                  stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.6"
+                />
+              )}
+              {/* Labels */}
               {showLabels && (
-                <text x={s.x + 8} y={s.y - 2} fill={color} fontSize="8" opacity={0.8} className="pointer-events-none select-none">
-                  T{t.id} {t.speed > 0 ? `${t.speed.toFixed(1)}m/s` : ""}
-                </text>
+                <g className="pointer-events-none select-none">
+                  <text x={s.x + 10} y={s.y - 6} fill={color} fontSize="8" fontWeight="600" opacity={0.9}>
+                    T{t.id}
+                  </text>
+                  <text x={s.x + 10} y={s.y + 4} fill="#9ca3af" fontSize="7" opacity={0.7}>
+                    {t.speed > 0.05 ? `${t.speed.toFixed(1)} m/s` : "stationary"}
+                  </text>
+                  <text x={s.x + 10} y={s.y + 14} fill="#6b7280" fontSize="7" opacity={0.5}>
+                    ({t.x.toFixed(1)}, {t.y.toFixed(1)})
+                  </text>
+                </g>
               )}
             </g>
           );
@@ -457,4 +510,4 @@ export default function ZoneCanvas({
       </svg>
     </div>
   );
-}
+});

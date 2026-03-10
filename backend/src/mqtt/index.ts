@@ -5,5 +5,6 @@ export {
   setNodeResolver,
   setAutoCreateNode,
   getNodeStatus,
+  getLatestTargets,
   publishNodeConfig,
 } from "./client";
