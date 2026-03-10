@@ -8,6 +8,7 @@ let ws: WebSocket | null = null;
 let msgId = 1;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<StateChangedCallback>();
+const pendingRequests = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 
 export function onStateChanged(cb: StateChangedCallback): () => void {
   listeners.add(cb);
@@ -64,6 +65,21 @@ function connect(): void {
       return;
     }
 
+    if (msg.type === "result") {
+      const id = msg.id as number;
+      const pending = pendingRequests.get(id);
+      if (pending) {
+        pendingRequests.delete(id);
+        if (msg.success) {
+          pending.resolve(msg.result);
+        } else {
+          const errMsg = (msg.error as { message?: string })?.message ?? "WS command failed";
+          pending.reject(new Error(errMsg));
+        }
+      }
+      return;
+    }
+
     if (msg.type === "event") {
       const event = msg.event as {
         data?: {
@@ -82,6 +98,10 @@ function connect(): void {
 
   ws.on("close", () => {
     logger.warn("HA WebSocket closed, reconnecting in 5s...");
+    for (const pending of pendingRequests.values()) {
+      pending.reject(new Error("WebSocket closed"));
+    }
+    pendingRequests.clear();
     ws = null;
     scheduleReconnect();
   });
@@ -115,7 +135,26 @@ export function stopHaWebSocket(): void {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  for (const pending of pendingRequests.values()) {
+    pending.reject(new Error("WebSocket closed"));
+  }
+  pendingRequests.clear();
   ws?.close();
   ws = null;
   listeners.clear();
+}
+
+export function callWs<T>(type: string, params: Record<string, unknown> = {}): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (!ws || ws.readyState !== 1) {
+      reject(new Error("WebSocket not open"));
+      return;
+    }
+    const id = nextId();
+    pendingRequests.set(id, {
+      resolve: (v) => resolve(v as T),
+      reject,
+    });
+    ws.send(JSON.stringify({ id, type, ...params }));
+  });
 }

@@ -1,5 +1,6 @@
 import { config } from "../config";
 import { logger } from "../logger";
+import { callWs } from "./subscriber";
 import type { HaState, HaDevice, HaArea, HaEntity } from "../types";
 
 const headers = (): Record<string, string> => ({
@@ -54,45 +55,19 @@ export async function callService(
 }
 
 export async function getDeviceRegistry(): Promise<HaDevice[]> {
-  const base = config.isAddon ? "http://supervisor" : config.ha.supervisorUrl;
-  const url = `${base}/api/hassio/homeassistant/api/config/device_registry/list`;
-
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({}),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Device registry ${res.status}`);
-    }
-
-    const data = (await res.json()) as { result: HaDevice[] } | HaDevice[];
-    return Array.isArray(data) ? data : data.result ?? [];
+    const result = await callWs<HaDevice[]>("config/device_registry/list");
+    return Array.isArray(result) ? result : [];
   } catch (err) {
-    logger.warn({ err }, "Failed to fetch device registry, falling back to WS");
+    logger.warn({ err }, "Failed to fetch device registry");
     return [];
   }
 }
 
 export async function getAreaRegistry(): Promise<HaArea[]> {
-  const base = config.isAddon ? "http://supervisor" : config.ha.supervisorUrl;
-  const url = `${base}/api/hassio/homeassistant/api/config/area_registry/list`;
-
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({}),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Area registry ${res.status}`);
-    }
-
-    const data = (await res.json()) as { result: HaArea[] } | HaArea[];
-    return Array.isArray(data) ? data : data.result ?? [];
+    const result = await callWs<HaArea[]>("config/area_registry/list");
+    return Array.isArray(result) ? result : [];
   } catch (err) {
     logger.warn({ err }, "Failed to fetch area registry");
     return [];
@@ -100,22 +75,9 @@ export async function getAreaRegistry(): Promise<HaArea[]> {
 }
 
 export async function getEntityRegistry(): Promise<HaEntity[]> {
-  const base = config.isAddon ? "http://supervisor" : config.ha.supervisorUrl;
-  const url = `${base}/api/hassio/homeassistant/api/config/entity_registry/list`;
-
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({}),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Entity registry ${res.status}`);
-    }
-
-    const data = (await res.json()) as { result: HaEntity[] } | HaEntity[];
-    return Array.isArray(data) ? data : data.result ?? [];
+    const result = await callWs<HaEntity[]>("config/entity_registry/list");
+    return Array.isArray(result) ? result : [];
   } catch (err) {
     logger.warn({ err }, "Failed to fetch entity registry");
     return [];
