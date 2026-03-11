@@ -1,5 +1,5 @@
 name: Zegy
-version: 1.1.0
+version: 1.1.1
 slug: zegy-sensor-manager
 description: >-
   Intelligent sensor orchestration for Home Assistant. Real-time monitoring
@@ -14,7 +14,7 @@ startup: services
 boot: auto
 ingress: true
 ingress_port: 47200
-panel_icon: mdi:sensor
+panel_icon: mdi:shield-lock
 panel_title: Zegy
 watchdog: "http://[HOST]:[PORT:47200]/api/health"
 ports:

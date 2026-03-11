@@ -162,16 +162,22 @@ export default memo(function ZoneCanvas({
   const [isDragging, setIsDragging] = useState(false);
 
   const SCALE = 100;
+  const MARGIN = 1;
   const vw = roomWidth * SCALE;
   const vh = roomHeight * SCALE;
+  const mx = MARGIN * SCALE;
+  const totalVw = vw + 2 * mx;
+  const totalVh = vh + 2 * mx;
 
   const clientToRoom = useCallback(
     (clientX: number, clientY: number): ZonePoint => {
       const svg = svgRef.current;
       if (!svg) return { x: 0, y: 0 };
       const rect = svg.getBoundingClientRect();
-      let rx = ((clientX - rect.left) / rect.width) * roomWidth;
-      let ry = ((clientY - rect.top) / rect.height) * roomHeight;
+      const fullW = roomWidth + 2 * MARGIN;
+      const fullH = roomHeight + 2 * MARGIN;
+      let rx = ((clientX - rect.left) / rect.width) * fullW - MARGIN;
+      let ry = ((clientY - rect.top) / rect.height) * fullH - MARGIN;
       if (snapEnabled && mode === "draw") {
         rx = snapToGrid(rx, gridStep);
         ry = snapToGrid(ry, gridStep);
@@ -263,7 +269,7 @@ export default memo(function ZoneCanvas({
     "default";
 
   return (
-    <div ref={containerRef} className="card relative overflow-hidden touch-none" style={{ aspectRatio: `${roomWidth} / ${roomHeight}` }}>
+    <div ref={containerRef} className="card relative overflow-hidden touch-none" style={{ aspectRatio: `${roomWidth + 2 * MARGIN} / ${roomHeight + 2 * MARGIN}` }}>
       {/* Coordinate readout */}
       {mousePos && (mode === "draw" || mode === "calibrate" || mode === "edit") && (
         <div className="absolute right-2 top-2 z-10 rounded-lg bg-surface/90 px-2 py-1 text-[10px] font-mono text-gray-400 backdrop-blur-sm border border-white/[0.06]">
@@ -294,7 +300,7 @@ export default memo(function ZoneCanvas({
         </div>
       )}
 
-      <svg ref={svgRef} viewBox={`0 0 ${vw} ${vh}`} className="w-full h-full select-none" style={{ cursor }}
+      <svg ref={svgRef} viewBox={`${-mx} ${-mx} ${totalVw} ${totalVh}`} className="w-full h-full select-none" style={{ cursor }}
         onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
         {/* Background */}
         <defs>
@@ -304,7 +310,8 @@ export default memo(function ZoneCanvas({
             <stop offset="100%" stopColor="rgba(8, 10, 16, 0.85)" />
           </radialGradient>
         </defs>
-        <rect width={vw} height={vh} fill="url(#zc-surface)" />
+        <rect x={-mx} y={-mx} width={totalVw} height={totalVh} fill="#080a10" />
+        <rect width={vw} height={vh} fill="url(#zc-surface)" rx={2} />
 
         {/* Room boundary walls */}
         <rect x={1} y={1} width={vw - 2} height={vh - 2} fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth={2} rx={2} className="pointer-events-none" />
@@ -535,6 +542,28 @@ export default memo(function ZoneCanvas({
                   )}
                 </>
               )}
+            </g>
+          );
+        })}
+
+        {/* Out-of-viewport edge indicators */}
+        {trackTargets.filter((t) =>
+          t.x < -MARGIN || t.x > roomWidth + MARGIN ||
+          t.y < -MARGIN || t.y > roomHeight + MARGIN
+        ).map((t) => {
+          const idx = trackTargets.indexOf(t);
+          const color = TRACK_COLORS[idx % TRACK_COLORS.length];
+          const cx = Math.max(-MARGIN + 0.15, Math.min(roomWidth + MARGIN - 0.15, t.x));
+          const cy = Math.max(-MARGIN + 0.15, Math.min(roomHeight + MARGIN - 0.15, t.y));
+          const s = r2s(cx, cy);
+          const angle = Math.atan2(t.y - cy, t.x - cx) * 180 / Math.PI;
+          return (
+            <g key={`oob-${t.nodeId}-${t.id}`} className="pointer-events-none">
+              <circle cx={s.x} cy={s.y} r={5} fill={color} opacity={0.6} />
+              <g transform={`translate(${s.x}, ${s.y}) rotate(${angle})`}>
+                <polygon points="10,0 3,-4 3,4" fill={color} opacity={0.8} />
+              </g>
+              <text x={s.x} y={s.y - 9} textAnchor="middle" fill={color} fontSize="8" fontWeight="600" opacity={0.7}>T{idx + 1}</text>
             </g>
           );
         })}
