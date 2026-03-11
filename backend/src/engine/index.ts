@@ -5,3 +5,10 @@ export {
   getZoneStates,
   resetZoneStates,
 } from "./zones";
+
+export {
+  processGestureFrame,
+  onGestureEvent,
+  getRecentGestureEvents,
+  resetGestureStates,
+} from "./gestures";

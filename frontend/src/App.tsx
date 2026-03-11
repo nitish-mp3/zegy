@@ -7,6 +7,7 @@ import FloorPlan from "./pages/FloorPlan";
 import Automations from "./pages/Automations";
 import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
+import Gestures from "./pages/Gestures";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="/devices" element={<Devices />} />
           <Route path="/floorplan" element={<FloorPlan />} />
           <Route path="/automations" element={<Automations />} />
+          <Route path="/gestures" element={<Gestures />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />

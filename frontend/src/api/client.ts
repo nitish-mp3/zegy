@@ -157,6 +157,21 @@ export const api = {
       "/api/settings",
       { method: "PUT", body: JSON.stringify(settings) },
     ),
+
+  // Gestures
+  getGestures: () => request<GestureBinding[]>("/api/gestures"),
+  createGesture: (binding: Omit<GestureBinding, "id">) =>
+    request<GestureBinding>("/api/gestures", { method: "POST", body: JSON.stringify(binding) }),
+  updateGesture: (id: string, binding: GestureBinding) =>
+    request<GestureBinding>(`/api/gestures/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(binding),
+    }),
+  deleteGesture: (id: string) =>
+    request<{ ok: boolean }>(`/api/gestures/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  getGestureActivity: () => request<GestureEvent[]>("/api/gestures/activity"),
 };
 
 // Types used by the API
@@ -200,4 +215,43 @@ interface SensorNode {
   scale: number;
   lastSeen: string | null;
   status: "online" | "offline" | "unknown";
+}
+
+type GestureType =
+  | "swipe_left"
+  | "swipe_right"
+  | "swipe_up"
+  | "swipe_down"
+  | "approach"
+  | "retreat"
+  | "wave"
+  | "push"
+  | "pull";
+
+interface GestureAction {
+  id: string;
+  entityId: string;
+  service: string;
+  data?: Record<string, unknown>;
+  delay: number;
+}
+
+interface GestureBinding {
+  id: string;
+  name: string;
+  gesture: GestureType;
+  enabled: boolean;
+  sensitivity: number;
+  cooldown: number;
+  zoneId: string | null;
+  actions: GestureAction[];
+}
+
+interface GestureEvent {
+  id: string;
+  bindingId: string;
+  gesture: GestureType;
+  timestamp: string;
+  targetId: number;
+  confidence: number;
 }

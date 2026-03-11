@@ -3,10 +3,11 @@ import { logger } from "./logger";
 import { createServer } from "./server";
 import { startHaWebSocket, stopHaWebSocket } from "./ha";
 import { startMqtt, stopMqtt, onTrackFrame, setNodeResolver, setAutoCreateNode } from "./mqtt";
-import { processTrackFrame, onZoneEvent } from "./engine";
+import { processTrackFrame, onZoneEvent, processGestureFrame, onGestureEvent } from "./engine";
 import { broadcastEvent } from "./ws";
 import { loadZones } from "./routes/zones";
 import { loadNodes, autoCreateNodeEntry } from "./routes/nodes";
+import { loadGestures } from "./routes/gestures";
 
 async function discoverMqttFromSupervisor(): Promise<void> {
   if (config.mqtt.url || !config.isAddon) return;
@@ -47,7 +48,9 @@ async function main(): Promise<void> {
       presence: frame.presence,
       targets: frame.targets,
     });
-    processTrackFrame(frame, loadZones());
+    const zones = loadZones();
+    processTrackFrame(frame, zones);
+    processGestureFrame(frame, loadGestures(), zones);
   });
 
   onZoneEvent((event) => {
@@ -56,6 +59,15 @@ async function main(): Promise<void> {
       zoneName: event.zoneName,
       eventType: event.type,
       targetCount: event.targetCount,
+    });
+  });
+
+  onGestureEvent((event) => {
+    broadcastEvent("gesture_event", {
+      bindingId: event.bindingId,
+      gesture: event.gesture,
+      targetId: event.targetId,
+      confidence: event.confidence,
     });
   });
 

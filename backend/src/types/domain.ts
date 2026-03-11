@@ -93,3 +93,44 @@ export interface ZoneEvent {
   timestamp: string;
   targetCount: number;
 }
+
+// ── Gesture Recognition ────────────────────────────────────────
+
+export type GestureType =
+  | "swipe_left"
+  | "swipe_right"
+  | "swipe_up"
+  | "swipe_down"
+  | "approach"
+  | "retreat"
+  | "wave"
+  | "push"
+  | "pull";
+
+export interface GestureAction {
+  id: string;
+  entityId: string;
+  service: string;
+  data?: Record<string, unknown>;
+  delay: number;
+}
+
+export interface GestureBinding {
+  id: string;
+  name: string;
+  gesture: GestureType;
+  enabled: boolean;
+  sensitivity: number;
+  cooldown: number;
+  zoneId: string | null;
+  actions: GestureAction[];
+}
+
+export interface GestureEvent {
+  id: string;
+  bindingId: string;
+  gesture: GestureType;
+  timestamp: string;
+  targetId: number;
+  confidence: number;
+}

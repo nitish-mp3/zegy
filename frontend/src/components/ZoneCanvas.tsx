@@ -125,6 +125,50 @@ function buildDistanceRings(node: SensorNodeMarker, scale: number): React.ReactN
 
 const TRACK_COLORS = ["#f59e0b", "#3b82f6", "#ef4444", "#a855f7", "#06b6d4", "#f97316"];
 
+interface EchoCluster {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  strength: number;
+  count: number;
+}
+
+function clusterEchoes(echoes: StaticEcho[], radius: number): EchoCluster[] {
+  if (echoes.length === 0) return [];
+  const used = new Set<number>();
+  const clusters: EchoCluster[] = [];
+  for (let i = 0; i < echoes.length; i++) {
+    if (used.has(i)) continue;
+    const group = [echoes[i]];
+    used.add(i);
+    for (let j = i + 1; j < echoes.length; j++) {
+      if (used.has(j)) continue;
+      const near = group.some((g) => Math.hypot(g.x - echoes[j].x, g.y - echoes[j].y) < radius);
+      if (near) { group.push(echoes[j]); used.add(j); }
+    }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let totalStr = 0;
+    for (const e of group) {
+      if (e.x < minX) minX = e.x;
+      if (e.x > maxX) maxX = e.x;
+      if (e.y < minY) minY = e.y;
+      if (e.y > maxY) maxY = e.y;
+      totalStr += e.strength;
+    }
+    const pad = 0.15;
+    clusters.push({
+      cx: (minX + maxX) / 2,
+      cy: (minY + maxY) / 2,
+      w: Math.max(maxX - minX + pad * 2, 0.3),
+      h: Math.max(maxY - minY + pad * 2, 0.3),
+      strength: totalStr / group.length,
+      count: group.length,
+    });
+  }
+  return clusters;
+}
+
 /* Component */
 
 export default memo(function ZoneCanvas({
@@ -345,26 +389,50 @@ export default memo(function ZoneCanvas({
           );
         })}
 
-        {/* Static environment echoes */}
-        {staticEchoes.map((echo, i) => {
-          const s = r2s(echo.x, echo.y);
-          const op = Math.max(0.05, echo.strength * 0.55);
-          const r = 2.5 + echo.strength * 2.5;
-          return (
-            <circle
-              key={`echo-${i}`}
-              cx={s.x}
-              cy={s.y}
-              r={r}
-              fill="#94a3b8"
-              fillOpacity={op}
-              stroke="#94a3b8"
-              strokeOpacity={op * 0.4}
-              strokeWidth={0.5}
-              className="pointer-events-none"
-            />
-          );
-        })}
+        {/* Static environment objects (clustered echoes) */}
+        {(() => {
+          const clusters = clusterEchoes(staticEchoes, 0.4);
+          return clusters.map((cl, i) => {
+            const s = r2s(cl.cx, cl.cy);
+            const sw = cl.w * SCALE;
+            const sh = cl.h * SCALE;
+            const op = Math.max(0.12, Math.min(0.5, cl.strength * 0.6));
+            return (
+              <g key={`obj-${i}`} className="pointer-events-none">
+                <rect
+                  x={s.x - sw / 2}
+                  y={s.y - sh / 2}
+                  width={sw}
+                  height={sh}
+                  rx={4}
+                  fill="#64748b"
+                  fillOpacity={op * 0.6}
+                  stroke="#94a3b8"
+                  strokeOpacity={op * 0.7}
+                  strokeWidth={1}
+                  strokeDasharray="3 2"
+                />
+                {cl.count >= 2 && (
+                  <text
+                    x={s.x}
+                    y={s.y + 1}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill="#94a3b8"
+                    fontSize="7"
+                    opacity={op * 0.8}
+                    className="select-none"
+                  >
+                    Object
+                  </text>
+                )}
+                {cl.count < 2 && (
+                  <circle cx={s.x} cy={s.y} r={3} fill="#94a3b8" fillOpacity={op * 0.5} />
+                )}
+              </g>
+            );
+          });
+        })()}
 
         {/* Motion history trail */}
         {showMotionHistory && trackHistory.map((point) => {
