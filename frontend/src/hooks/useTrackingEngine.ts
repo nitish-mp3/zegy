@@ -43,14 +43,14 @@ interface EchoCell {
   lastSeen: number;
 }
 
-const SMOOTH_ALPHA_MIN = 0.18;
+const SMOOTH_ALPHA_MIN = 0.08;
 const SMOOTH_ALPHA_MAX = 0.52;
 const TARGET_TIMEOUT_MS = 15000;
 const FADE_MS = 3000;
 const MAX_JUMP_M = 1.25;
 const MAX_REASSIGN_M = 1.0;
 const STATIONARY_SPEED_MS = 0.08;
-const STATIONARY_LOCK_M = 0.06;
+const STATIONARY_LOCK_M = 0.16;
 const ECHO_GRID = 0.25;
 const ECHO_SPEED_THRESHOLD = 0.04;
 const ECHO_GAIN = 0.04;
@@ -177,12 +177,13 @@ export function useTrackingEngine() {
           target.x = target.rawX;
           target.y = target.rawY;
         } else if (target.speed <= STATIONARY_SPEED_MS && dist < STATIONARY_LOCK_M) {
-          const lockT = 1 - Math.pow(1 - 0.1, dt / 16.67);
-          target.x = lerp(target.x, target.rawX, lockT);
-          target.y = lerp(target.y, target.rawY, lockT);
-          if (dist < 0.012) {
+          if (dist < 0.025) {
             target.x = target.rawX;
             target.y = target.rawY;
+          } else {
+            const lockT = 1 - Math.pow(1 - 0.04, dt / 16.67);
+            target.x = lerp(target.x, target.rawX, lockT);
+            target.y = lerp(target.y, target.rawY, lockT);
           }
         } else {
           const moveT = 1 - Math.pow(1 - getAdaptiveAlpha(target.speed, dist), dt / 16.67);

@@ -124,6 +124,7 @@ export interface GestureBinding {
   cooldown: number;
   zoneId: string | null;
   actions: GestureAction[];
+  stats?: { correct: number; incorrect: number };
 }
 
 export interface GestureEvent {
@@ -133,4 +134,5 @@ export interface GestureEvent {
   timestamp: string;
   targetId: number;
   confidence: number;
+  actionNames?: string[];
 }

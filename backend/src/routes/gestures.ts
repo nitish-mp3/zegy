@@ -106,4 +106,25 @@ export async function gestureRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(500).send({ error: "Failed to load gesture activity" });
     }
   });
+
+  app.post("/api/gestures/feedback", async (req, reply) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (typeof b.bindingId !== "string" || typeof b.correct !== "boolean") {
+        return reply.status(400).send({ error: "bindingId and correct (boolean) are required" });
+      }
+      const bindings = loadGestures();
+      const idx = bindings.findIndex((g) => g.id === (b.bindingId as string));
+      if (idx === -1) return reply.status(404).send({ error: "Binding not found" });
+      const stats = bindings[idx].stats ?? { correct: 0, incorrect: 0 };
+      if (b.correct) stats.correct++;
+      else stats.incorrect++;
+      bindings[idx] = { ...bindings[idx], stats };
+      saveGestures(bindings);
+      return reply.send({ ok: true, stats });
+    } catch (err) {
+      logger.error({ err }, "Failed to save gesture feedback");
+      return reply.status(500).send({ error: "Failed to save feedback" });
+    }
+  });
 }

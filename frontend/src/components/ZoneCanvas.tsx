@@ -75,6 +75,7 @@ export interface CanvasProps {
   showGrid: boolean;
   showLabels: boolean;
   triggeredZoneIds: Set<string>;
+  gestureZoneFlashes?: Map<string, { gesture: string; bindingName: string; at: number }>;
   onCanvasClick: (rx: number, ry: number) => void;
   onCanvasMouseMove: (rx: number, ry: number) => void;
   onZoneClick: (id: string) => void;
@@ -124,6 +125,15 @@ function buildDistanceRings(node: SensorNodeMarker, scale: number): React.ReactN
 }
 
 const TRACK_COLORS = ["#f59e0b", "#3b82f6", "#ef4444", "#a855f7", "#06b6d4", "#f97316"];
+
+const GESTURE_ICONS: Record<string, string> = {
+  approach: "→",
+  recede: "←",
+  left_to_right: "→",
+  right_to_left: "←",
+  stationary: "◉",
+  wave: "↕",
+};
 
 interface EchoCluster {
   cx: number;
@@ -191,6 +201,7 @@ export default memo(function ZoneCanvas({
   showGrid,
   showLabels,
   triggeredZoneIds,
+  gestureZoneFlashes,
   onCanvasClick,
   onCanvasMouseMove,
   onZoneClick,
@@ -480,6 +491,25 @@ export default memo(function ZoneCanvas({
                   <animate attributeName="opacity" values="0.9;0.3;0.9" dur="1.8s" repeatCount="indefinite" />
                 </circle>
               )}
+              {(() => {
+                const flash = gestureZoneFlashes?.get(zone.id);
+                if (!flash) return null;
+                const age = Date.now() - flash.at;
+                const duration = 2500;
+                if (age > duration) return null;
+                const progress = age / duration;
+                const opacity = progress < 0.15 ? progress / 0.15 : 1 - (progress - 0.15) / 0.85;
+                const ringR = 12 + progress * 28;
+                const icon = GESTURE_ICONS[flash.gesture] ?? "✦";
+                return (
+                  <g className="pointer-events-none select-none">
+                    <circle cx={sc.x} cy={sc.y} r={ringR} fill="none" stroke={zone.color} strokeWidth={2} opacity={opacity * 0.6} />
+                    <circle cx={sc.x} cy={sc.y} r={ringR * 0.55} fill={zone.color} fillOpacity={opacity * 0.18} />
+                    <text x={sc.x} y={sc.y - 4} textAnchor="middle" dominantBaseline="middle" fontSize="18" opacity={opacity}>{icon}</text>
+                    <text x={sc.x} y={sc.y + 14} textAnchor="middle" fill={zone.color} fontSize="8" fontWeight="600" opacity={opacity * 0.9}>{flash.bindingName}</text>
+                  </g>
+                );
+              })()}
               {!zone.enabled && showLabels && (
                 <text x={sc.x} y={sc.y + 10} textAnchor="middle" dominantBaseline="middle" fill="#6b7280" fontSize="8" className="pointer-events-none select-none">disabled</text>
               )}

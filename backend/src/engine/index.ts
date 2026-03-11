@@ -9,6 +9,7 @@ export {
 export {
   processGestureFrame,
   onGestureEvent,
+  onGestureDebug,
   getRecentGestureEvents,
   resetGestureStates,
 } from "./gestures";

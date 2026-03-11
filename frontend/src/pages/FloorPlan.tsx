@@ -98,6 +98,10 @@ export default function FloorPlan() {
   /* Validate mode */
   const [triggeredZoneIds, setTriggeredZoneIds] = useState<Set<string>>(new Set());
 
+  /* Gesture flashes on map */
+  const [gestureZoneFlashes, setGestureZoneFlashes] = useState<Map<string, { gesture: string; bindingName: string; at: number }>>(new Map());
+  const [, forceFlashRender] = useState(0);
+
   /* Undo/Redo */
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
@@ -190,9 +194,27 @@ export default function FloorPlan() {
           ),
         );
       }
+      if (data.type === "gesture_event") {
+        const gz = data.zoneId as string | null;
+        if (gz) {
+          setGestureZoneFlashes((prev) => {
+            const next = new Map(prev);
+            next.set(gz, { gesture: data.gesture as string, bindingName: data.bindingName as string, at: Date.now() });
+            return next;
+          });
+        }
+      }
     });
     return unsub;
   }, [ingestFrame, showMotionHistory, mode, setZones]);
+
+  /* Tick forceFlashRender while any gesture flash is active so SVG opacity animates */
+  useEffect(() => {
+    const active = [...gestureZoneFlashes.values()].some((f) => Date.now() - f.at < 2500);
+    if (!active) return;
+    const id = window.setInterval(() => forceFlashRender((n) => n + 1), 50);
+    return () => window.clearInterval(id);
+  }, [gestureZoneFlashes]);
 
   /* Motion history aging */
   useEffect(() => {
@@ -635,6 +657,7 @@ export default function FloorPlan() {
             showGrid={showGrid}
             showLabels={showLabels}
             triggeredZoneIds={triggeredZoneIds}
+            gestureZoneFlashes={gestureZoneFlashes}
             onCanvasClick={handleCanvasClick}
             onCanvasMouseMove={handleCanvasMouseMove}
             onZoneClick={handleZoneClick}

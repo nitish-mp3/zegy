@@ -3,7 +3,7 @@ import { logger } from "./logger";
 import { createServer } from "./server";
 import { startHaWebSocket, stopHaWebSocket } from "./ha";
 import { startMqtt, stopMqtt, onTrackFrame, setNodeResolver, setAutoCreateNode } from "./mqtt";
-import { processTrackFrame, onZoneEvent, processGestureFrame, onGestureEvent } from "./engine";
+import { processTrackFrame, onZoneEvent, processGestureFrame, onGestureEvent, onGestureDebug } from "./engine";
 import { broadcastEvent } from "./ws";
 import { loadZones } from "./routes/zones";
 import { loadNodes, autoCreateNodeEntry } from "./routes/nodes";
@@ -63,12 +63,22 @@ async function main(): Promise<void> {
   });
 
   onGestureEvent((event) => {
+    const bindings = loadGestures();
+    const binding = bindings.find((b) => b.id === event.bindingId);
     broadcastEvent("gesture_event", {
+      id: event.id,
       bindingId: event.bindingId,
+      bindingName: binding?.name ?? event.bindingId,
+      zoneId: binding?.zoneId ?? null,
       gesture: event.gesture,
       targetId: event.targetId,
       confidence: event.confidence,
+      actionNames: event.actionNames ?? [],
     });
+  });
+
+  onGestureDebug((targets) => {
+    broadcastEvent("gesture_debug", { targets });
   });
 
   startMqtt();

@@ -172,6 +172,11 @@ export const api = {
       method: "DELETE",
     }),
   getGestureActivity: () => request<GestureEvent[]>("/api/gestures/activity"),
+  submitGestureFeedback: (bindingId: string, correct: boolean) =>
+    request<{ ok: boolean; stats: { correct: number; incorrect: number } }>("/api/gestures/feedback", {
+      method: "POST",
+      body: JSON.stringify({ bindingId, correct }),
+    }),
 };
 
 // Types used by the API
@@ -245,6 +250,7 @@ interface GestureBinding {
   cooldown: number;
   zoneId: string | null;
   actions: GestureAction[];
+  stats?: { correct: number; incorrect: number };
 }
 
 interface GestureEvent {
@@ -254,4 +260,5 @@ interface GestureEvent {
   timestamp: string;
   targetId: number;
   confidence: number;
+  actionNames?: string[];
 }

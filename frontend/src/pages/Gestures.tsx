@@ -30,6 +30,7 @@ interface GestureBinding {
   cooldown: number;
   zoneId: string | null;
   actions: GestureAction[];
+  stats?: { correct: number; incorrect: number };
 }
 
 interface Zone { id: string; name: string }
@@ -41,6 +42,16 @@ interface LiveEvent {
   targetId: number;
   confidence: number;
   time: number;
+}
+
+interface DebugTarget {
+  targetId: number;
+  nodeId: string;
+  dx: number;
+  dy: number;
+  dist: number;
+  scores: Partial<Record<GestureType, number>>;
+  inCooldown: string[];
 }
 
 const GESTURE_TYPES: { value: GestureType; label: string; icon: string }[] = [
@@ -133,6 +144,8 @@ export default function Gestures() {
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [debugTargets, setDebugTargets] = useState<DebugTarget[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
 
   const [formName, setFormName] = useState("");
   const [formGesture, setFormGesture] = useState<GestureType>("swipe_right");
@@ -166,6 +179,9 @@ export default function Gestures() {
           confidence: data.confidence as number,
           time: Date.now(),
         }, ...prev].slice(0, 20));
+      }
+      if (data.type === "gesture_debug") {
+        setDebugTargets((data.targets as DebugTarget[]) ?? []);
       }
     });
   }, []);
@@ -445,6 +461,17 @@ export default function Gestures() {
                       <span className="font-medium text-sm text-zinc-100 truncate">{binding.name}</span>
                       {!binding.enabled && <span className="badge text-[10px] bg-zinc-600/30 text-zinc-500">disabled</span>}
                       {recentFire && <span className="badge text-[10px] bg-teal-500/20 text-teal-400 animate-pulse">triggered</span>}
+                      {binding.stats && binding.stats.correct + binding.stats.incorrect > 0 && (() => {
+                        const total = binding.stats.correct + binding.stats.incorrect;
+                        const pct = Math.round((binding.stats.correct / total) * 100);
+                        return (
+                          <span className={`badge text-[10px] ${
+                            pct >= 80 ? "bg-teal-500/20 text-teal-400" :
+                            pct >= 50 ? "bg-amber-500/20 text-amber-400" :
+                            "bg-red-500/20 text-red-400"
+                          }`}>{pct}% accurate</span>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-3 text-xs text-zinc-500">
                       <span>{gestureInfo?.label ?? binding.gesture}</span>
@@ -458,6 +485,11 @@ export default function Gestures() {
                       {binding.actions.length === 0
                         ? "No actions"
                         : `${binding.actions.length} action${binding.actions.length !== 1 ? "s" : ""}`}
+                      {binding.stats && binding.stats.correct + binding.stats.incorrect > 0 && (
+                        <span className="ml-2 text-zinc-700">
+                          · {binding.stats.correct + binding.stats.incorrect} detections
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button
@@ -478,8 +510,133 @@ export default function Gestures() {
           })}
         </div>
 
-        {/* Live activity feed */}
+        {/* Live activity feed + debug panel */}
         <div className="space-y-3">
+          {/* Live Debug Panel */}
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="section-title">Motion Debug</h3>
+              <button
+                onClick={() => setShowDebug((v) => !v)}
+                className={`text-[11px] px-2.5 py-1 rounded-lg border transition ${
+                  showDebug
+                    ? "border-teal-500/40 text-teal-400 bg-teal-500/10"
+                    : "border-white/10 text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {showDebug ? "● Live" : "○ Paused"}
+              </button>
+            </div>
+
+            {!showDebug ? (
+              <div className="text-center py-6">
+                <p className="text-xs text-zinc-500 mb-2">Enable to see real-time gesture scores</p>
+                <button
+                  onClick={() => setShowDebug(true)}
+                  className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-2"
+                >
+                  Start monitoring
+                </button>
+              </div>
+            ) : debugTargets.length === 0 ? (
+              <p className="text-xs text-zinc-500 text-center py-6 italic">No motion detected — move in front of a sensor</p>
+            ) : (
+              <div className="space-y-4">
+                {debugTargets.map((target) => {
+                  const angle = Math.atan2(target.dy, target.dx);
+                  const arrowX = 50 + Math.cos(angle) * 30;
+                  const arrowY = 50 + Math.sin(angle) * 30;
+                  const sortedScores = Object.entries(target.scores)
+                    .sort(([, a], [, b]) => (b as number) - (a as number))
+                    .slice(0, 5) as [GestureType, number][];
+                  const topGesture = sortedScores[0]?.[0];
+                  const topScore = sortedScores[0]?.[1] ?? 0;
+                  const inCooldown = target.inCooldown.length > 0;
+
+                  return (
+                    <div key={`${target.nodeId}:${target.targetId}`} className="rounded-xl bg-[#0f1117] p-3 border border-white/[0.05]">
+                      <div className="flex items-center gap-3 mb-3">
+                        {/* Direction arrow SVG */}
+                        <div className="flex-shrink-0">
+                          <svg width="64" height="64" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2" />
+                            {Array.from({ length: 8 }, (_, i) => {
+                              const a = (i * Math.PI) / 4;
+                              return (
+                                <line key={i}
+                                  x1={50 + Math.cos(a) * 30} y1={50 + Math.sin(a) * 30}
+                                  x2={50 + Math.cos(a) * 44} y2={50 + Math.sin(a) * 44}
+                                  stroke="rgba(255,255,255,0.08)" strokeWidth="1"
+                                />
+                              );
+                            })}
+                            {target.dist > 0.04 ? (
+                              <>
+                                <defs>
+                                  <marker id={`arrowhead-${target.targetId}`} markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+                                    <path d="M0,0 L0,6 L6,3 z" fill={inCooldown ? "#f59e0b" : "#2dd4b4"} />
+                                  </marker>
+                                </defs>
+                                <line
+                                  x1="50" y1="50"
+                                  x2={arrowX} y2={arrowY}
+                                  stroke={inCooldown ? "#f59e0b" : "#2dd4b4"}
+                                  strokeWidth="3"
+                                  strokeLinecap="round"
+                                  markerEnd={`url(#arrowhead-${target.targetId})`}
+                                />
+                              </>
+                            ) : (
+                              <circle cx="50" cy="50" r="4" fill="#475569" />
+                            )}
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] text-zinc-400 mb-0.5">
+                            Target {target.targetId} <span className="text-zinc-600">· {target.nodeId}</span>
+                          </div>
+                          {inCooldown ? (
+                            <div className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full inline-block">Cooling down…</div>
+                          ) : topScore > 0.15 ? (
+                            <div className="text-[10px] text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-full inline-block">
+                              {GESTURE_TYPES.find((g) => g.value === topGesture)?.icon} {GESTURE_TYPES.find((g) => g.value === topGesture)?.label} ({Math.round(topScore * 100)}%)
+                            </div>
+                          ) : target.dist > 0.02 ? (
+                            <div className="text-[10px] text-zinc-500">Moving — building confidence…</div>
+                          ) : (
+                            <div className="text-[10px] text-zinc-600">Stationary</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {sortedScores.length > 0 && (
+                        <div className="space-y-1">
+                          {sortedScores.map(([gesture, score]) => {
+                            const info = GESTURE_TYPES.find((g) => g.value === gesture);
+                            const pct = Math.round(score * 100);
+                            return (
+                              <div key={gesture} className="flex items-center gap-2">
+                                <span className="text-[10px] w-16 text-zinc-400 truncate">{info?.label ?? gesture}</span>
+                                <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-150 ${
+                                      pct >= 80 ? "bg-teal-400" : pct >= 50 ? "bg-amber-400" : "bg-zinc-500"
+                                    }`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-zinc-600 w-8 text-right">{pct}%</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
           <Card>
             <h3 className="section-title mb-3">Live Activity</h3>
             {liveEvents.length === 0 ? (

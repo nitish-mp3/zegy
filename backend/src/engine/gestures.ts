@@ -16,19 +16,39 @@ interface TargetHistory {
   lastGestureTime: Map<string, number>;
 }
 
+interface DebugTarget {
+  targetId: number;
+  nodeId: string;
+  dx: number;
+  dy: number;
+  dist: number;
+  scores: Partial<Record<GestureType, number>>;
+  inCooldown: string[];
+}
+
+type GestureDebugCallback = (targets: DebugTarget[]) => void;
+
 const WINDOW_MS = 800;
 const MIN_SAMPLES = 4;
 const MAX_SAMPLES = 40;
+const DEBUG_INTERVAL_MS = 150;
 
 const targetHistories = new Map<string, TargetHistory>();
 const eventListeners = new Set<GestureEventCallback>();
+const debugListeners = new Set<GestureDebugCallback>();
 const recentGestureEvents: GestureEvent[] = [];
 const MAX_EVENTS = 200;
 let eventCounter = 0;
+let lastDebugEmit = 0;
 
 export function onGestureEvent(cb: GestureEventCallback): () => void {
   eventListeners.add(cb);
   return () => { eventListeners.delete(cb); };
+}
+
+export function onGestureDebug(cb: GestureDebugCallback): () => void {
+  debugListeners.add(cb);
+  return () => { debugListeners.delete(cb); };
 }
 
 export function getRecentGestureEvents(): GestureEvent[] {
@@ -48,6 +68,50 @@ function getHistory(key: string): TargetHistory {
     targetHistories.set(key, h);
   }
   return h;
+}
+
+function computeGestureScores(
+  history: TargetHistory,
+  sensitivity: number,
+): Partial<Record<GestureType, number>> {
+  const samples = history.samples;
+  if (samples.length < 2) return {};
+
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const dx = last.x - first.x;
+  const dy = last.y - first.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const threshold = 0.3 / Math.max(0.3, sensitivity);
+  const scores: Partial<Record<GestureType, number>> = {};
+
+  const osc = countOscillations(samples);
+  if (osc > 0) scores.wave = Math.min(1, osc * 0.5);
+
+  if (dist > 0.04) {
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    const distScore = Math.min(1, dist / threshold);
+
+    if (absX > absY * 0.5) {
+      scores[dx > 0 ? "swipe_right" : "swipe_left"] = distScore * (absX / (absX + absY));
+    }
+    if (absY > absX * 0.5) {
+      scores[dy > 0 ? "swipe_down" : "swipe_up"] = distScore * (absY / (absX + absY));
+    }
+
+    const avgSpeed = samples.reduce((s, p) => s + p.speed, 0) / samples.length;
+    const speedScore = Math.min(1, avgSpeed / (0.3 / Math.max(0.3, sensitivity)));
+    if (speedScore > 0.2) {
+      const angle = Math.atan2(dy, dx);
+      if (Math.abs(angle) < Math.PI / 4) scores.push = speedScore;
+      else if (Math.abs(angle) > (3 * Math.PI) / 4) scores.pull = speedScore;
+      else if (dy < 0) scores.approach = speedScore;
+      else scores.retreat = speedScore;
+    }
+  }
+
+  return scores;
 }
 
 function detectGesture(history: TargetHistory, sensitivity: number): { type: GestureType; confidence: number } | null {
@@ -195,6 +259,7 @@ export function processGestureFrame(
         timestamp: new Date().toISOString(),
         targetId: target.id,
         confidence: result.confidence,
+        actionNames: binding.actions.map((a) => `${a.entityId} → ${a.service}`),
       };
 
       emitEvent(event);
@@ -202,6 +267,39 @@ export function processGestureFrame(
       if (binding.actions.length > 0) {
         executeActions(binding.actions).catch(() => {});
       }
+    }
+  }
+
+  if (debugListeners.size > 0 && now - lastDebugEmit >= DEBUG_INTERVAL_MS) {
+    const debugTargets: DebugTarget[] = [];
+    for (const [key, history] of targetHistories) {
+      if (history.samples.length < 2) continue;
+      const lastSample = history.samples[history.samples.length - 1];
+      if (now - lastSample.time > 2000) continue;
+      const colonIdx = key.indexOf(":");
+      const nodeId = key.slice(0, colonIdx);
+      const targetId = parseInt(key.slice(colonIdx + 1));
+      const firstSample = history.samples[0];
+      const dx = lastSample.x - firstSample.x;
+      const dy = lastSample.y - firstSample.y;
+      const inCooldown: string[] = [];
+      for (const b of bindings) {
+        const lastFired = history.lastGestureTime.get(b.id) ?? 0;
+        if (now - lastFired < b.cooldown) inCooldown.push(b.id);
+      }
+      debugTargets.push({
+        targetId,
+        nodeId,
+        dx,
+        dy,
+        dist: Math.hypot(dx, dy),
+        scores: computeGestureScores(history, 1),
+        inCooldown,
+      });
+    }
+    if (debugTargets.length > 0) {
+      for (const cb of debugListeners) cb(debugTargets);
+      lastDebugEmit = now;
     }
   }
 

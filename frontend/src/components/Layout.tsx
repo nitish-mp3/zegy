@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import { useWebSocket } from "../hooks/useWebSocket";
+import GestureToast from "./GestureToast";
 
 export default function Layout({ children }: { children: ReactNode }) {
   useWebSocket();
@@ -16,6 +17,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div className="mx-auto max-w-7xl animate-fade-in">{children}</div>
         </main>
       </div>
+      <GestureToast />
     </div>
   );
 }

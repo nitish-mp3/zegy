@@ -8,7 +8,9 @@ A real-time sensor monitoring, spatial mapping, and analytics platform for Home 
 |---------|-------------|
 | Live Dashboard | Real-time sensor readings with auto-updating values |
 | Device Explorer | Browse all sensor devices with search, filtering, and detail panels |
-| Floor Plan Editor | Drag-and-drop sensor placement on an interactive canvas |
+| Floor Plan Editor | Interactive SVG canvas — drag zones, place sensors, live presence dots |
+| Zone Presence | Polygon zone detection with enter/exit automations and HA action execution |
+| Gesture Recognition | Sliding-window gesture detection (approach, retreat, wave, swipe) bound to zones and HA actions |
 | Analytics | Sensor distribution by class and area, device health overview |
 | WebSocket Streaming | Instant state change propagation without polling |
 
