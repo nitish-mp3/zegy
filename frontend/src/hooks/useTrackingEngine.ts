@@ -29,10 +29,11 @@ interface TrackedTarget {
   opacity: number;
 }
 
-const LERP_FACTOR = 0.25;
-const TARGET_TIMEOUT_MS = 8000;
-const FADE_MS = 2000;
-const MAX_JUMP_M = 4.0;
+const LERP_FACTOR = 0.35;
+const TARGET_TIMEOUT_MS = 5000;
+const FADE_MS = 1500;
+const MAX_JUMP_M = 1.5;
+const MAX_REASSIGN_M = 1.2;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -42,35 +43,44 @@ export function useTrackingEngine() {
   const mapRef = useRef(new Map<string, TrackedTarget>());
   const [targets, setTargets] = useState<SmoothedTarget[]>([]);
   const rafRef = useRef(0);
-  const activeRef = useRef(false);
+  const nextIdRef = useRef(0);
 
   const ingestFrame = useCallback((nodeId: string, rawTargets: RawTarget[]) => {
     const now = Date.now();
     const map = mapRef.current;
 
-    // Mark all targets from this node as "not updated yet"
-    const updatedKeys = new Set<string>();
+    const existingForNode: Array<{ key: string; v: TrackedTarget }> = [];
+    for (const [key, v] of map) {
+      if (v.nodeId === nodeId) existingForNode.push({ key, v });
+    }
+
+    const taken = new Set<string>();
 
     for (const t of rawTargets) {
-      const key = `${nodeId}:${t.id}`;
-      updatedKeys.add(key);
-      const existing = map.get(key);
+      let bestKey: string | null = null;
+      let bestDist = MAX_REASSIGN_M;
 
-      if (existing) {
-        const dx = t.x - existing.rawX;
-        const dy = t.y - existing.rawY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist > MAX_JUMP_M) {
-          existing.x = t.x;
-          existing.y = t.y;
+      for (const { key, v } of existingForNode) {
+        if (taken.has(key)) continue;
+        const dx = t.x - v.rawX;
+        const dy = t.y - v.rawY;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < bestDist) {
+          bestDist = d;
+          bestKey = key;
         }
+      }
+
+      if (bestKey) {
+        taken.add(bestKey);
+        const existing = map.get(bestKey)!;
         existing.rawX = t.x;
         existing.rawY = t.y;
         existing.speed = t.speed;
         existing.lastSeen = now;
         existing.opacity = 1;
       } else {
+        const key = `${nodeId}:uid-${nextIdRef.current++}`;
         map.set(key, {
           id: t.id,
           nodeId,
@@ -84,10 +94,6 @@ export function useTrackingEngine() {
         });
       }
     }
-
-    if (!activeRef.current && map.size > 0) {
-      activeRef.current = true;
-    }
   }, []);
 
   useEffect(() => {
@@ -98,12 +104,6 @@ export function useTrackingEngine() {
       lastTime = time;
       const now = Date.now();
       const map = mapRef.current;
-
-      if (map.size === 0) {
-        activeRef.current = false;
-        rafRef.current = requestAnimationFrame(tick);
-        return;
-      }
 
       const t = 1 - Math.pow(1 - LERP_FACTOR, dt / 16.67);
 
@@ -119,8 +119,17 @@ export function useTrackingEngine() {
           }
         }
 
-        target.x = lerp(target.x, target.rawX, t);
-        target.y = lerp(target.y, target.rawY, t);
+        const dx = target.rawX - target.x;
+        const dy = target.rawY - target.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > MAX_JUMP_M) {
+          target.x = target.rawX;
+          target.y = target.rawY;
+        } else {
+          target.x = lerp(target.x, target.rawX, t);
+          target.y = lerp(target.y, target.rawY, t);
+        }
       }
 
       const output: SmoothedTarget[] = [];
@@ -151,3 +160,4 @@ export function useTrackingEngine() {
 
   return { targets, ingestFrame, clearTargets };
 }
+

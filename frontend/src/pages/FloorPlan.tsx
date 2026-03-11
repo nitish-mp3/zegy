@@ -646,7 +646,7 @@ export default function FloorPlan() {
 
         {/* Side Panel - Desktop */}
         <aside className="hidden lg:block w-80 shrink-0 space-y-3">
-          <SidePanel />
+          {SidePanel()}
         </aside>
 
         {/* Side Panel - Mobile overlay */}
@@ -660,7 +660,7 @@ export default function FloorPlan() {
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
               </div>
-              <SidePanel />
+              {SidePanel()}
             </aside>
           </div>
         )}
@@ -681,9 +681,9 @@ export default function FloorPlan() {
           ))}
         </div>
 
-        {panelTab === "zones" && <ZonesPanel />}
-        {panelTab === "calibration" && <CalibrationPanel />}
-        {panelTab === "settings" && <SettingsPanel />}
+        {panelTab === "zones" && ZonesPanel()}
+        {panelTab === "calibration" && CalibrationPanel()}
+        {panelTab === "settings" && SettingsPanel()}
       </>
     );
   }
@@ -776,9 +776,9 @@ export default function FloorPlan() {
             <div className="border-t border-white/[0.06]" />
 
             {/* On Enter Actions */}
-            <ActionSection title="On Enter" actions={editZone.onEnter} type="enter" />
+            {ActionSection({ title: "On Enter", actions: editZone.onEnter, type: "enter" })}
             {/* On Exit Actions */}
-            <ActionSection title="On Exit" actions={editZone.onExit} type="exit" />
+            {ActionSection({ title: "On Exit", actions: editZone.onExit, type: "exit" })}
 
             {/* Add Action Form */}
             {addingAction && (

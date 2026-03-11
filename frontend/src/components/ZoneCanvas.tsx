@@ -297,6 +297,17 @@ export default memo(function ZoneCanvas({
         </defs>
         <rect width={vw} height={vh} fill="url(#zc-surface)" />
 
+        {/* Room boundary walls */}
+        <rect x={1} y={1} width={vw - 2} height={vh - 2} fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth={2} rx={2} className="pointer-events-none" />
+        <line x1={0} y1={0} x2={12} y2={0} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={0} y1={0} x2={0} y2={12} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={vw} y1={0} x2={vw - 12} y2={0} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={vw} y1={0} x2={vw} y2={12} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={0} y1={vh} x2={12} y2={vh} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={0} y1={vh} x2={0} y2={vh - 12} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={vw} y1={vh} x2={vw - 12} y2={vh} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+        <line x1={vw} y1={vh} x2={vw} y2={vh - 12} stroke="rgba(255,255,255,0.35)" strokeWidth={3} strokeLinecap="round" className="pointer-events-none" />
+
         {/* Grid */}
         {gridLines}
 
@@ -308,11 +319,12 @@ export default memo(function ZoneCanvas({
 
         {/* Sensor coverage cones + distance rings */}
         {showCoverage && sensorNodes.map((node) => {
-          const stroke = node.status === "online" ? "#2dd4b4" : node.status === "offline" ? "#ef4444" : "#6b7280";
+          const isOnline = node.status === "online";
+          const stroke = isOnline ? "#2dd4b4" : node.status === "offline" ? "#ef4444" : "#6b7280";
           return (
             <g key={`cov-${node.id}`} className="pointer-events-none">
-              {node.status === "online" && buildDistanceRings(node, SCALE)}
-              <path d={buildCoveragePath(node, SCALE)} fill={stroke} fillOpacity={0.06} stroke={stroke} strokeOpacity={0.25} strokeWidth="1" />
+              {isOnline && buildDistanceRings(node, SCALE)}
+              <path d={buildCoveragePath(node, SCALE)} fill={stroke} fillOpacity={isOnline ? 0.07 : 0.03} stroke={stroke} strokeOpacity={isOnline ? 0.35 : 0.15} strokeWidth={isOnline ? "1.5" : "1"} strokeDasharray={isOnline ? undefined : "6 3"} />
             </g>
           );
         })}
@@ -449,39 +461,38 @@ export default memo(function ZoneCanvas({
           const color = TRACK_COLORS[i % TRACK_COLORS.length];
           const alpha = t.opacity ?? 1;
           const isStale = t.stale ?? false;
-          const speedKm = t.speed * 3.6;
+          const isStationary = t.speed < 0.08;
           return (
-            <g key={`track-${t.nodeId ?? "?"}-${t.id}`} opacity={alpha}>
-              {/* Outer pulse ring */}
+            <g key={`track-${t.nodeId ?? "?"}-${t.id}`} opacity={alpha} className="pointer-events-none">
+              {/* Soft glow halo — static, no animation */}
               {!isStale && (
-                <circle cx={s.x} cy={s.y} r="12" fill="none" stroke={color} strokeWidth="1" opacity="0.3">
-                  <animate attributeName="r" values="8;18;8" dur="2.2s" repeatCount="indefinite" />
-                  <animate attributeName="opacity" values="0.35;0.03;0.35" dur="2.2s" repeatCount="indefinite" />
-                </circle>
+                <circle cx={s.x} cy={s.y} r={16} fill={color} fillOpacity={0.08} />
               )}
-              {/* Detection range ring */}
-              <circle cx={s.x} cy={s.y} r="18" fill="none" stroke={color} strokeWidth="0.5" strokeDasharray="3 3" opacity={0.15} />
-              {/* Main dot — uses transform for GPU positioning */}
-              <circle cx={s.x} cy={s.y} r={isStale ? 4 : 6} fill={color} fillOpacity={isStale ? 0.4 : 0.9} stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" />
-              {/* Speed indicator arrow */}
-              {t.speed > 0.1 && !isStale && (
-                <line
-                  x1={s.x} y1={s.y}
-                  x2={s.x + Math.min(t.speed * 12, 25)} y2={s.y}
-                  stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.6"
-                />
+              {/* Outer ring */}
+              <circle cx={s.x} cy={s.y} r={isStale ? 7 : 10} fill="none" stroke={color} strokeWidth={isStale ? 0.5 : 1} opacity={isStale ? 0.2 : 0.4} />
+              {/* Main dot */}
+              <circle cx={s.x} cy={s.y} r={isStale ? 3.5 : 5.5} fill={color} fillOpacity={isStale ? 0.35 : 1} stroke="rgba(0,0,0,0.4)" strokeWidth={1} />
+              {/* Stationary indicator — small inner dot */}
+              {isStationary && !isStale && (
+                <circle cx={s.x} cy={s.y} r={2} fill="white" fillOpacity={0.6} />
               )}
+              {/* Velocity vector */}
+              {t.speed > 0.15 && !isStale && (() => {
+                const len = Math.min(t.speed * 14, 30);
+                return <line x1={s.x} y1={s.y} x2={s.x + len} y2={s.y} stroke={color} strokeWidth={2} strokeLinecap="round" opacity={0.55} />;
+              })()}
               {/* Labels */}
               {showLabels && (
-                <g className="pointer-events-none select-none">
-                  <text x={s.x + 10} y={s.y - 6} fill={color} fontSize="8" fontWeight="600" opacity={0.9}>
-                    T{t.id}
+                <g className="select-none">
+                  <rect x={s.x + 9} y={s.y - 13} width={42} height={28} rx={3} fill="rgba(0,0,0,0.45)" />
+                  <text x={s.x + 13} y={s.y - 4} fill={color} fontSize={8} fontWeight="600">
+                    T{i + 1}
                   </text>
-                  <text x={s.x + 10} y={s.y + 4} fill="#9ca3af" fontSize="7" opacity={0.7}>
-                    {t.speed > 0.05 ? `${t.speed.toFixed(1)} m/s` : "stationary"}
+                  <text x={s.x + 13} y={s.y + 6} fill="#9ca3af" fontSize={7}>
+                    {isStationary ? "still" : `${t.speed.toFixed(1)}m/s`}
                   </text>
-                  <text x={s.x + 10} y={s.y + 14} fill="#6b7280" fontSize="7" opacity={0.5}>
-                    ({t.x.toFixed(1)}, {t.y.toFixed(1)})
+                  <text x={s.x + 13} y={s.y + 14} fill="#6b7280" fontSize={6}>
+                    {t.x.toFixed(1)},{t.y.toFixed(1)}
                   </text>
                 </g>
               )}
