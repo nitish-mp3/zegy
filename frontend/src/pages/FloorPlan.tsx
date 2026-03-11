@@ -14,7 +14,7 @@ import {
   type CalibrationState,
   type AffineParams,
 } from "../utils/calibration";
-import ZoneCanvas, { type EditorMode, type ZonePoint } from "../components/ZoneCanvas";
+import ZoneCanvas, { type EditorMode, type ZonePoint, type StaticEcho } from "../components/ZoneCanvas";
 import { useTrackingEngine } from "../hooks/useTrackingEngine";
 
 /* ---- Constants ---- */
@@ -41,7 +41,7 @@ function getServicesForEntity(entityId: string): string[] {
 
 /* ---- Types ---- */
 
-interface TrackTarget { id: number; x: number; y: number; speed: number; opacity?: number; stale?: boolean; nodeId?: string }
+interface TrackTarget { id: number; x: number; y: number; speed: number; opacity?: number; stale?: boolean; nodeId?: string; lastSeen?: number }
 interface TrackHistoryPoint { id: string; x: number; y: number; ageMs: number }
 interface UndoEntry { zones: Zone[]; description: string }
 
@@ -70,7 +70,7 @@ export default function FloorPlan() {
   const [showLabels, setShowLabels] = useState(true);
 
   /* Live tracking */
-  const { targets: smoothedTargets, ingestFrame } = useTrackingEngine();
+  const { targets: smoothedTargets, staticEchoes, ingestFrame } = useTrackingEngine();
   const trackTargets: TrackTarget[] = smoothedTargets;
   const [trackHistory, setTrackHistory] = useState<TrackHistoryPoint[]>([]);
 
@@ -625,6 +625,7 @@ export default function FloorPlan() {
             sensorNodes={sensorNodeMarkers}
             trackTargets={trackTargets}
             trackHistory={trackHistory}
+            staticEchoes={staticEchoes}
             mode={mode}
             selectedZoneId={selectedZoneId}
             drawingPoints={drawingPoints}

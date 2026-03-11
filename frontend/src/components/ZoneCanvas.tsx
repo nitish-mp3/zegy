@@ -26,6 +26,13 @@ export interface TrackTarget {
   opacity?: number;
   stale?: boolean;
   nodeId?: string;
+  lastSeen?: number;
+}
+
+export interface StaticEcho {
+  x: number;
+  y: number;
+  strength: number;
 }
 
 export interface TrackHistoryPoint {
@@ -58,6 +65,7 @@ export interface CanvasProps {
   sensorNodes: SensorNodeMarker[];
   trackTargets: TrackTarget[];
   trackHistory: TrackHistoryPoint[];
+  staticEchoes: StaticEcho[];
   mode: EditorMode;
   selectedZoneId: string | null;
   drawingPoints: ZonePoint[];
@@ -129,6 +137,7 @@ export default memo(function ZoneCanvas({
   sensorNodes,
   trackTargets,
   trackHistory,
+  staticEchoes,
   mode,
   selectedZoneId,
   drawingPoints,
@@ -329,6 +338,27 @@ export default memo(function ZoneCanvas({
           );
         })}
 
+        {/* Static environment echoes */}
+        {staticEchoes.map((echo, i) => {
+          const s = r2s(echo.x, echo.y);
+          const op = Math.max(0.05, echo.strength * 0.55);
+          const r = 2.5 + echo.strength * 2.5;
+          return (
+            <circle
+              key={`echo-${i}`}
+              cx={s.x}
+              cy={s.y}
+              r={r}
+              fill="#94a3b8"
+              fillOpacity={op}
+              stroke="#94a3b8"
+              strokeOpacity={op * 0.4}
+              strokeWidth={0.5}
+              className="pointer-events-none"
+            />
+          );
+        })}
+
         {/* Motion history trail */}
         {showMotionHistory && trackHistory.map((point) => {
           const opacity = Math.max(0.06, 0.40 - point.ageMs / 18000);
@@ -461,40 +491,49 @@ export default memo(function ZoneCanvas({
           const color = TRACK_COLORS[i % TRACK_COLORS.length];
           const alpha = t.opacity ?? 1;
           const isStale = t.stale ?? false;
-          const isStationary = t.speed < 0.08;
+          const isStationary = t.speed < 0.06;
+          const staleAgeSec = isStale && t.lastSeen ? Math.round((Date.now() - t.lastSeen) / 1000) : 0;
           return (
             <g key={`track-${t.nodeId ?? "?"}-${t.id}`} opacity={alpha} className="pointer-events-none">
-              {/* Soft glow halo — static, no animation */}
-              {!isStale && (
-                <circle cx={s.x} cy={s.y} r={16} fill={color} fillOpacity={0.08} />
-              )}
-              {/* Outer ring */}
-              <circle cx={s.x} cy={s.y} r={isStale ? 7 : 10} fill="none" stroke={color} strokeWidth={isStale ? 0.5 : 1} opacity={isStale ? 0.2 : 0.4} />
-              {/* Main dot */}
-              <circle cx={s.x} cy={s.y} r={isStale ? 3.5 : 5.5} fill={color} fillOpacity={isStale ? 0.35 : 1} stroke="rgba(0,0,0,0.4)" strokeWidth={1} />
-              {/* Stationary indicator — small inner dot */}
-              {isStationary && !isStale && (
-                <circle cx={s.x} cy={s.y} r={2} fill="white" fillOpacity={0.6} />
-              )}
-              {/* Velocity vector */}
-              {t.speed > 0.15 && !isStale && (() => {
-                const len = Math.min(t.speed * 14, 30);
-                return <line x1={s.x} y1={s.y} x2={s.x + len} y2={s.y} stroke={color} strokeWidth={2} strokeLinecap="round" opacity={0.55} />;
-              })()}
-              {/* Labels */}
-              {showLabels && (
-                <g className="select-none">
-                  <rect x={s.x + 9} y={s.y - 13} width={42} height={28} rx={3} fill="rgba(0,0,0,0.45)" />
-                  <text x={s.x + 13} y={s.y - 4} fill={color} fontSize={8} fontWeight="600">
-                    T{i + 1}
-                  </text>
-                  <text x={s.x + 13} y={s.y + 6} fill="#9ca3af" fontSize={7}>
-                    {isStationary ? "still" : `${t.speed.toFixed(1)}m/s`}
-                  </text>
-                  <text x={s.x + 13} y={s.y + 14} fill="#6b7280" fontSize={6}>
-                    {t.x.toFixed(1)},{t.y.toFixed(1)}
-                  </text>
-                </g>
+              {isStale ? (
+                <>
+                  {/* Last known position ghost */}
+                  <circle cx={s.x} cy={s.y} r={18} fill="none" stroke={color} strokeWidth={1} strokeDasharray="4 4" opacity={0.35} />
+                  <circle cx={s.x} cy={s.y} r={10} fill={color} fillOpacity={0.08} stroke={color} strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+                  <circle cx={s.x} cy={s.y} r={4} fill={color} fillOpacity={0.3} />
+                  {showLabels && (
+                    <g className="select-none">
+                      <rect x={s.x + 9} y={s.y - 13} width={52} height={20} rx={3} fill="rgba(0,0,0,0.55)" />
+                      <text x={s.x + 13} y={s.y - 3} fill={color} fontSize={8} fontWeight="600" opacity={0.7}>T{i + 1} last seen</text>
+                      <text x={s.x + 13} y={s.y + 6} fill="#6b7280" fontSize={7}>{staleAgeSec}s ago</text>
+                    </g>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Soft glow halo */}
+                  <circle cx={s.x} cy={s.y} r={18} fill={color} fillOpacity={0.07} />
+                  {/* Outer ring */}
+                  <circle cx={s.x} cy={s.y} r={11} fill="none" stroke={color} strokeWidth={1} opacity={0.4} />
+                  {/* Main dot */}
+                  <circle cx={s.x} cy={s.y} r={6} fill={color} stroke="rgba(0,0,0,0.5)" strokeWidth={1.5} />
+                  {/* Stationary indicator */}
+                  {isStationary && (
+                    <circle cx={s.x} cy={s.y} r={2.5} fill="white" fillOpacity={0.7} />
+                  )}
+                  {showLabels && (
+                    <g className="select-none">
+                      <rect x={s.x + 11} y={s.y - 14} width={46} height={30} rx={3} fill="rgba(0,0,0,0.5)" />
+                      <text x={s.x + 15} y={s.y - 4} fill={color} fontSize={8} fontWeight="600">T{i + 1}</text>
+                      <text x={s.x + 15} y={s.y + 6} fill="#9ca3af" fontSize={7}>
+                        {isStationary ? "stationary" : `${t.speed.toFixed(1)} m/s`}
+                      </text>
+                      <text x={s.x + 15} y={s.y + 15} fill="#6b7280" fontSize={6}>
+                        {t.x.toFixed(1)}, {t.y.toFixed(1)}
+                      </text>
+                    </g>
+                  )}
+                </>
               )}
             </g>
           );

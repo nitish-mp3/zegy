@@ -5,12 +5,29 @@ import type { TrackFrame, TrackTarget, SensorNode } from "../types";
 
 type TrackCallback = (frame: TrackFrame) => void;
 
+interface FilteredTrack {
+  id: number;
+  nodeId: string;
+  rawX: number;
+  rawY: number;
+  x: number;
+  y: number;
+  speed: number;
+  lastSeen: number;
+}
+
 let client: mqtt.MqttClient | null = null;
 const trackListeners = new Set<TrackCallback>();
 const nodeStatusMap = new Map<string, { lastSeen: string; status: "online" | "offline" }>();
 const latestTargets = new Map<string, TrackTarget[]>();
+const filteredTracks = new Map<string, FilteredTrack>();
 let staleTimer: ReturnType<typeof setInterval> | null = null;
 const NODE_STALE_MS = 120_000;
+const TRACK_HOLD_MS = 2_500;
+const TRACK_MATCH_DISTANCE_M = 1.1;
+const TRACK_ALPHA_MIN = 0.18;
+const TRACK_ALPHA_MAX = 0.62;
+let nextFilteredTrackId = 1;
 
 // Track the MQTT nodeId ↔ internal node.id mapping for stale cleanup
 const nodeIdToMqttId = new Map<string, string>();
@@ -55,6 +72,82 @@ function transformTargets(
   }));
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function getAdaptiveAlpha(speed: number, dist: number): number {
+  return clamp(0.2 + Math.min(speed, 1.5) * 0.18 + Math.min(dist, 1.5) * 0.14, TRACK_ALPHA_MIN, TRACK_ALPHA_MAX);
+}
+
+function stabilizeTargets(nodeId: string, rawTargets: TrackTarget[]): TrackTarget[] {
+  const now = Date.now();
+  const existing = [...filteredTracks.entries()].filter(([, track]) => track.nodeId === nodeId);
+  const claimed = new Set<string>();
+  const output: TrackTarget[] = [];
+
+  for (const raw of rawTargets) {
+    let bestKey: string | null = null;
+    let bestDist = TRACK_MATCH_DISTANCE_M;
+
+    for (const [key, track] of existing) {
+      if (claimed.has(key)) continue;
+      const dist = distance(raw, { x: track.rawX, y: track.rawY });
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestKey = key;
+      }
+    }
+
+    if (bestKey) {
+      claimed.add(bestKey);
+      const track = filteredTracks.get(bestKey)!;
+      const alpha = getAdaptiveAlpha(raw.speed, bestDist);
+      track.rawX = raw.x;
+      track.rawY = raw.y;
+      track.x += (raw.x - track.x) * alpha;
+      track.y += (raw.y - track.y) * alpha;
+      track.speed += (raw.speed - track.speed) * Math.min(alpha + 0.12, 0.82);
+      track.lastSeen = now;
+      output.push({ id: track.id, x: track.x, y: track.y, speed: track.speed });
+      continue;
+    }
+
+    const stableId = nextFilteredTrackId++;
+    const key = `${nodeId}:stable-${stableId}`;
+    filteredTracks.set(key, {
+      id: stableId,
+      nodeId,
+      rawX: raw.x,
+      rawY: raw.y,
+      x: raw.x,
+      y: raw.y,
+      speed: raw.speed,
+      lastSeen: now,
+    });
+    output.push({ id: stableId, x: raw.x, y: raw.y, speed: raw.speed });
+  }
+
+  for (const [key, track] of existing) {
+    if (claimed.has(key)) continue;
+    const age = now - track.lastSeen;
+    if (age <= TRACK_HOLD_MS) {
+      track.speed *= 0.9;
+      output.push({ id: track.id, x: track.x, y: track.y, speed: track.speed });
+    } else {
+      filteredTracks.delete(key);
+    }
+  }
+
+  return output.sort((a, b) => a.id - b.id);
+}
+
 function handleTrackMessage(
   nodeId: string,
   data: { presence?: boolean; targets?: { id: number; x: number; y: number; speed: number }[] },
@@ -74,13 +167,13 @@ function handleTrackMessage(
   nodeIdToMqttId.set(node.id, nodeId);
 
   const rawTargets = Array.isArray(data.targets) ? data.targets : [];
-  const targets = transformTargets(rawTargets, node);
+  const targets = stabilizeTargets(nodeId, transformTargets(rawTargets, node));
   latestTargets.set(nodeId, targets);
 
   const frame: TrackFrame = {
     nodeId,
     timestamp: new Date().toISOString(),
-    presence: data.presence ?? rawTargets.length > 0,
+    presence: targets.length > 0 || data.presence === true,
     targets,
   };
 
@@ -173,7 +266,12 @@ function startStaleDetection(): void {
           entry.status = "offline";
           // Clean up latestTargets using the correct MQTT nodeId key
           const mqttId = nodeIdToMqttId.get(id);
-          if (mqttId) latestTargets.delete(mqttId);
+          if (mqttId) {
+            latestTargets.delete(mqttId);
+            for (const [trackKey, track] of filteredTracks) {
+              if (track.nodeId === mqttId) filteredTracks.delete(trackKey);
+            }
+          }
           logger.info({ nodeId: id }, "Node marked offline (no data for 2 min)");
         }
       }
@@ -185,6 +283,8 @@ export function stopMqtt(): void {
   client?.end(true);
   client = null;
   trackListeners.clear();
+  latestTargets.clear();
+  filteredTracks.clear();
   if (staleTimer) { clearInterval(staleTimer); staleTimer = null; }
 }
 
