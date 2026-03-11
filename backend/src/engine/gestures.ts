@@ -14,6 +14,26 @@ interface MotionSample {
 interface TargetHistory {
   samples: MotionSample[];
   lastGestureTime: Map<string, number>;
+  lastActivity: number;
+}
+
+interface TrajectoryFeatures {
+  netDx: number;
+  netDy: number;
+  netDist: number;
+  pathLen: number;
+  linearity: number;
+  swDx: number;
+  swDy: number;
+  axisRatio: number;
+  dominantAxis: "x" | "y";
+  axisSign: number;
+  consistency: number;
+  peakSpeed: number;
+  avgSpeed: number;
+  peakSpeedPos: number;
+  tailAvgSpeed: number;
+  duration: number;
 }
 
 interface DebugTarget {
@@ -28,10 +48,33 @@ interface DebugTarget {
 
 type GestureDebugCallback = (targets: DebugTarget[]) => void;
 
-const WINDOW_MS = 800;
-const MIN_SAMPLES = 4;
-const MAX_SAMPLES = 40;
-const DEBUG_INTERVAL_MS = 150;
+const WINDOW_MS             = 1000;
+const MIN_SAMPLES           = 8;
+const MIN_DURATION_MS       = 220;
+const MAX_SAMPLES           = 60;
+const DEBUG_INTERVAL_MS     = 150;
+const STALE_HISTORY_MS      = 5000;
+const NOISE_STEP_M          = 0.012;
+const GHOST_POS_M           = 0.06;
+const GHOST_SPD_MS          = 0.06;
+
+const BASE_DISP_M           = 0.25;
+const BASE_PATH_M           = 0.20;
+const MIN_LINEARITY         = 0.62;
+const MIN_AXIS_RATIO        = 2.2;
+const MIN_CONSISTENCY       = 0.68;
+const BASE_PEAK_SPD         = 0.22;
+const MIN_PEAK_MEAN_RATIO   = 1.35;
+const PUSH_PEAK_SPD         = 0.55;
+const SETTLING_RATIO        = 0.80;
+const MIN_CONFIDENCE        = 0.42;
+
+const WAVE_MIN_SAMPLES      = 10;
+const WAVE_MIN_CYCLES       = 2;
+const WAVE_AMPLITUDE_M      = 0.10;
+const WAVE_MAX_Y_RATIO      = 0.45;
+const WAVE_AMP_CV_MAX       = 0.50;
+const WAVE_PERIOD_CV_MAX    = 0.55;
 
 const targetHistories = new Map<string, TargetHistory>();
 const eventListeners = new Set<GestureEventCallback>();
@@ -61,13 +104,197 @@ function emitEvent(event: GestureEvent): void {
   for (const cb of eventListeners) cb(event);
 }
 
-function getHistory(key: string): TargetHistory {
+function getHistory(key: string, now: number): TargetHistory {
   let h = targetHistories.get(key);
   if (!h) {
-    h = { samples: [], lastGestureTime: new Map() };
+    h = { samples: [], lastGestureTime: new Map(), lastActivity: now };
     targetHistories.set(key, h);
   }
   return h;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
+  if (samples.length < 3) return null;
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const duration = last.time - first.time;
+  if (duration < 1) return null;
+
+  const netDx = last.x - first.x;
+  const netDy = last.y - first.y;
+  const netDist = Math.sqrt(netDx * netDx + netDy * netDy);
+
+  let pathLen = 0;
+  let peakSpeed = 0;
+  let peakIdx = 0;
+  let totalSpeed = 0;
+  let swDx = 0;
+  let swDy = 0;
+
+  for (let i = 1; i < samples.length; i++) {
+    const sdx = samples[i].x - samples[i - 1].x;
+    const sdy = samples[i].y - samples[i - 1].y;
+    pathLen += Math.sqrt(sdx * sdx + sdy * sdy);
+    const spd = samples[i].speed;
+    totalSpeed += spd;
+    if (spd > peakSpeed) { peakSpeed = spd; peakIdx = i; }
+    swDx += sdx * spd;
+    swDy += sdy * spd;
+  }
+
+  const n = samples.length - 1;
+  const avgSpeed = totalSpeed / n;
+  const linearity = pathLen > 0.001 ? clamp(netDist / pathLen, 0, 1) : 0;
+  const peakSpeedPos = n > 0 ? peakIdx / n : 0;
+
+  const tailCount = Math.max(2, Math.round(samples.length * 0.22));
+  let tailTotal = 0;
+  for (let i = samples.length - tailCount; i < samples.length; i++) tailTotal += samples[i].speed;
+  const tailAvgSpeed = tailTotal / tailCount;
+
+  const absSwDx = Math.abs(swDx);
+  const absSwDy = Math.abs(swDy);
+  const dominantAxis: "x" | "y" = absSwDx >= absSwDy ? "x" : "y";
+  const axisRatio = absSwDx >= absSwDy
+    ? absSwDx / Math.max(absSwDy, 0.0001)
+    : absSwDy / Math.max(absSwDx, 0.0001);
+  const axisSign = dominantAxis === "x" ? Math.sign(swDx) : Math.sign(swDy);
+
+  let consistent = 0;
+  let counted = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const delta = dominantAxis === "x"
+      ? samples[i].x - samples[i - 1].x
+      : samples[i].y - samples[i - 1].y;
+    if (Math.abs(delta) < NOISE_STEP_M) continue;
+    counted++;
+    if (Math.sign(delta) === axisSign) consistent++;
+  }
+  const consistency = counted >= 3 ? consistent / counted : 0;
+
+  return {
+    netDx, netDy, netDist, pathLen, linearity,
+    swDx, swDy, axisRatio, dominantAxis, axisSign, consistency,
+    peakSpeed, avgSpeed, peakSpeedPos, tailAvgSpeed, duration,
+  };
+}
+
+function detectWave(
+  samples: MotionSample[],
+  sens: number,
+): { type: GestureType; confidence: number } | null {
+  if (samples.length < WAVE_MIN_SAMPLES) return null;
+  const minAmp = WAVE_AMPLITUDE_M / Math.max(0.2, sens);
+
+  const amplitudes: number[] = [];
+  const periods: number[] = [];
+  let lastTurnX = samples[0].x;
+  let lastTurnTime = samples[0].time;
+  let lastDir = 0;
+  let totalXMove = 0;
+  let totalYMove = 0;
+
+  for (let i = 1; i < samples.length; i++) {
+    const dx = samples[i].x - samples[i - 1].x;
+    const dy = samples[i].y - samples[i - 1].y;
+    totalXMove += Math.abs(dx);
+    totalYMove += Math.abs(dy);
+    const dir = dx > NOISE_STEP_M ? 1 : dx < -NOISE_STEP_M ? -1 : 0;
+    if (dir !== 0 && dir !== lastDir) {
+      const amp = Math.abs(samples[i].x - lastTurnX);
+      const period = samples[i].time - lastTurnTime;
+      if (amp >= minAmp) {
+        amplitudes.push(amp);
+        periods.push(period);
+        lastTurnX = samples[i].x;
+        lastTurnTime = samples[i].time;
+      }
+      lastDir = dir;
+    }
+  }
+
+  if (totalXMove > 0 && totalYMove / totalXMove > WAVE_MAX_Y_RATIO) return null;
+
+  const fullCycles = Math.floor(amplitudes.length / 2);
+  if (fullCycles < WAVE_MIN_CYCLES) return null;
+
+  const ampMean = amplitudes.reduce((s, v) => s + v, 0) / amplitudes.length;
+  const ampStd = Math.sqrt(amplitudes.reduce((s, v) => s + (v - ampMean) ** 2, 0) / amplitudes.length);
+  const ampCv = ampStd / Math.max(ampMean, 0.0001);
+  if (ampCv > WAVE_AMP_CV_MAX) return null;
+
+  if (periods.length >= 3) {
+    const perMean = periods.reduce((s, v) => s + v, 0) / periods.length;
+    const perStd = Math.sqrt(periods.reduce((s, v) => s + (v - perMean) ** 2, 0) / periods.length);
+    if (perStd / Math.max(perMean, 1) > WAVE_PERIOD_CV_MAX) return null;
+  }
+
+  const cycleScore = clamp((fullCycles - 1) / 3.5, 0, 1);
+  const ampScore = clamp(ampMean / (minAmp * 2.5), 0, 1);
+  const consistScore = clamp(1 - ampCv / WAVE_AMP_CV_MAX, 0, 1);
+  const confidence = clamp(0.45 * cycleScore + 0.30 * ampScore + 0.25 * consistScore, 0, 1);
+  if (confidence < 0.30) return null;
+
+  return { type: "wave", confidence };
+}
+
+function detectDirectional(
+  samples: MotionSample[],
+  sens: number,
+): { type: GestureType; confidence: number } | null {
+  if (samples.length < MIN_SAMPLES) return null;
+
+  const s = Math.max(0.2, sens);
+  const m = extractFeatures(samples);
+  if (!m) return null;
+
+  if (m.duration < MIN_DURATION_MS) return null;
+
+  const minDisp  = BASE_DISP_M / s;
+  const minPath  = BASE_PATH_M / s;
+  const minPeak  = BASE_PEAK_SPD / Math.sqrt(s);
+
+  if (m.netDist < minDisp)                                        return null;
+  if (m.pathLen < minPath)                                        return null;
+  if (m.linearity < MIN_LINEARITY)                                return null;
+  if (m.axisRatio < MIN_AXIS_RATIO)                               return null;
+  if (m.consistency < MIN_CONSISTENCY)                            return null;
+  if (m.peakSpeed < minPeak)                                      return null;
+  if (m.peakSpeedPos < 0.08 || m.peakSpeedPos > 0.93)            return null;
+  if (m.avgSpeed > 0 && m.peakSpeed < m.avgSpeed * MIN_PEAK_MEAN_RATIO) return null;
+  if (m.duration > 500 && m.tailAvgSpeed > m.peakSpeed * SETTLING_RATIO) return null;
+
+  const dispScore   = clamp((m.netDist  - minDisp) / (minDisp * 2.0),         0, 1);
+  const linScore    = clamp((m.linearity - MIN_LINEARITY) / (1 - MIN_LINEARITY), 0, 1);
+  const conScore    = clamp((m.consistency - MIN_CONSISTENCY) / (1 - MIN_CONSISTENCY), 0, 1);
+  const axScore     = clamp((m.axisRatio - MIN_AXIS_RATIO) / (MIN_AXIS_RATIO * 2.0), 0, 1);
+  const spdScore    = clamp((m.peakSpeed  - minPeak)  / (minPeak * 3.0),       0, 1);
+  const peakScore   = clamp((m.peakSpeed / Math.max(m.avgSpeed, 0.001) - MIN_PEAK_MEAN_RATIO) / 1.5, 0, 1);
+
+  const rawConf = 0.22 * dispScore + 0.22 * linScore + 0.20 * conScore + 0.14 * axScore + 0.12 * spdScore + 0.10 * peakScore;
+  const confidence = clamp(Math.pow(rawConf, 0.75), 0, 1);
+  if (confidence < MIN_CONFIDENCE) return null;
+
+  if (m.dominantAxis === "x") {
+    return { type: m.axisSign > 0 ? "swipe_right" : "swipe_left", confidence };
+  }
+
+  const fastThresh = PUSH_PEAK_SPD / Math.sqrt(s);
+  if (m.axisSign < 0) return { type: m.peakSpeed >= fastThresh ? "push" : "approach", confidence };
+  return { type: m.peakSpeed >= fastThresh ? "pull" : "retreat", confidence };
+}
+
+function detectGesture(
+  history: TargetHistory,
+  sensitivity: number,
+): { type: GestureType; confidence: number } | null {
+  const wave = detectWave(history.samples, sensitivity);
+  if (wave) return wave;
+  return detectDirectional(history.samples, sensitivity);
 }
 
 function computeGestureScores(
@@ -75,104 +302,41 @@ function computeGestureScores(
   sensitivity: number,
 ): Partial<Record<GestureType, number>> {
   const samples = history.samples;
-  if (samples.length < 2) return {};
-
-  const first = samples[0];
-  const last = samples[samples.length - 1];
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  const threshold = 0.3 / Math.max(0.3, sensitivity);
+  if (samples.length < 3) return {};
   const scores: Partial<Record<GestureType, number>> = {};
 
-  const osc = countOscillations(samples);
-  if (osc > 0) scores.wave = Math.min(1, osc * 0.5);
+  const wave = detectWave(samples, sensitivity);
+  if (wave) scores.wave = wave.confidence;
 
-  if (dist > 0.04) {
-    const absX = Math.abs(dx);
-    const absY = Math.abs(dy);
-    const distScore = Math.min(1, dist / threshold);
+  const dir = detectDirectional(samples, sensitivity);
+  if (dir) { scores[dir.type] = dir.confidence; return scores; }
 
-    if (absX > absY * 0.5) {
-      scores[dx > 0 ? "swipe_right" : "swipe_left"] = distScore * (absX / (absX + absY));
-    }
-    if (absY > absX * 0.5) {
-      scores[dy > 0 ? "swipe_down" : "swipe_up"] = distScore * (absY / (absX + absY));
-    }
-
-    const avgSpeed = samples.reduce((s, p) => s + p.speed, 0) / samples.length;
-    const speedScore = Math.min(1, avgSpeed / (0.3 / Math.max(0.3, sensitivity)));
-    if (speedScore > 0.2) {
-      const angle = Math.atan2(dy, dx);
-      if (Math.abs(angle) < Math.PI / 4) scores.push = speedScore;
-      else if (Math.abs(angle) > (3 * Math.PI) / 4) scores.pull = speedScore;
-      else if (dy < 0) scores.approach = speedScore;
-      else scores.retreat = speedScore;
+  const m = extractFeatures(samples);
+  if (m && m.netDist > 0.04 && m.pathLen > 0.02) {
+    const s = Math.max(0.2, sensitivity);
+    const minDisp = BASE_DISP_M / s;
+    const minPeak = BASE_PEAK_SPD / Math.sqrt(s);
+    const partial = clamp(
+      (m.netDist / minDisp) * 0.25 +
+      m.linearity * 0.25 +
+      m.consistency * 0.25 +
+      clamp(m.peakSpeed / Math.max(minPeak * 2, 0.01), 0, 1) * 0.25,
+      0, 0.70,
+    );
+    if (partial > 0.08 && !scores.wave) {
+      if (m.dominantAxis === "x") {
+        scores[m.axisSign > 0 ? "swipe_right" : "swipe_left"] = partial;
+      } else {
+        const fastThresh = PUSH_PEAK_SPD / Math.sqrt(s);
+        const type: GestureType = m.axisSign < 0
+          ? (m.peakSpeed >= fastThresh ? "push" : "approach")
+          : (m.peakSpeed >= fastThresh ? "pull" : "retreat");
+        scores[type] = partial;
+      }
     }
   }
 
   return scores;
-}
-
-function detectGesture(history: TargetHistory, sensitivity: number): { type: GestureType; confidence: number } | null {
-  const samples = history.samples;
-  if (samples.length < MIN_SAMPLES) return null;
-
-  const first = samples[0];
-  const last = samples[samples.length - 1];
-  const duration = last.time - first.time;
-  if (duration < 100 || duration > WINDOW_MS) return null;
-
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-
-  const threshold = 0.3 / Math.max(0.3, sensitivity);
-
-  if (dist < threshold) {
-    const oscillations = countOscillations(samples);
-    if (oscillations >= 2) {
-      const conf = Math.min(1, (oscillations - 1) * 0.4);
-      return { type: "wave", confidence: conf };
-    }
-    return null;
-  }
-
-  const confidence = Math.min(1, dist / (threshold * 3));
-  const absX = Math.abs(dx);
-  const absY = Math.abs(dy);
-
-  if (absX > absY * 1.4) {
-    return { type: dx > 0 ? "swipe_right" : "swipe_left", confidence };
-  }
-  if (absY > absX * 1.4) {
-    return { type: dy > 0 ? "swipe_down" : "swipe_up", confidence };
-  }
-
-  const avgSpeed = samples.reduce((s, p) => s + p.speed, 0) / samples.length;
-  if (avgSpeed > 0.3 / Math.max(0.3, sensitivity)) {
-    const angle = Math.atan2(dy, dx);
-    if (Math.abs(angle) < Math.PI / 4) return { type: "push", confidence };
-    if (Math.abs(angle) > (3 * Math.PI) / 4) return { type: "pull", confidence };
-    if (dy < 0) return { type: "approach", confidence };
-    return { type: "retreat", confidence };
-  }
-
-  return null;
-}
-
-function countOscillations(samples: MotionSample[]): number {
-  let changes = 0;
-  let prevDir = 0;
-  for (let i = 1; i < samples.length; i++) {
-    const dx = samples[i].x - samples[i - 1].x;
-    const dir = dx > 0.02 ? 1 : dx < -0.02 ? -1 : 0;
-    if (dir !== 0 && dir !== prevDir) {
-      changes++;
-      prevDir = dir;
-    }
-  }
-  return Math.floor(changes / 2);
 }
 
 async function executeActions(
@@ -218,21 +382,16 @@ export function processGestureFrame(
   const now = Date.now();
 
   for (const target of frame.targets) {
+    if (Math.abs(target.x) < GHOST_POS_M && Math.abs(target.y) < GHOST_POS_M && target.speed < GHOST_SPD_MS) continue;
+
     const key = `${frame.nodeId}:${target.id}`;
-    const history = getHistory(key);
+    const history = getHistory(key, now);
+    history.lastActivity = now;
 
-    history.samples.push({
-      x: target.x,
-      y: target.y,
-      speed: target.speed,
-      time: now,
-    });
-
+    history.samples.push({ x: target.x, y: target.y, speed: target.speed, time: now });
     while (history.samples.length > MAX_SAMPLES) history.samples.shift();
     const cutoff = now - WINDOW_MS;
-    while (history.samples.length > 0 && history.samples[0].time < cutoff) {
-      history.samples.shift();
-    }
+    while (history.samples.length > 0 && history.samples[0].time < cutoff) history.samples.shift();
 
     for (const binding of bindings) {
       if (!binding.enabled) continue;
@@ -247,12 +406,11 @@ export function processGestureFrame(
 
       const result = detectGesture(history, binding.sensitivity);
       if (!result || result.type !== binding.gesture) continue;
-      if (result.confidence < 0.3) continue;
 
       history.lastGestureTime.set(binding.id, now);
-      history.samples.length = 0;
+      history.samples = [];
 
-      const event: GestureEvent = {
+      emitEvent({
         id: `ge-${++eventCounter}`,
         bindingId: binding.id,
         gesture: result.type,
@@ -260,13 +418,9 @@ export function processGestureFrame(
         targetId: target.id,
         confidence: result.confidence,
         actionNames: binding.actions.map((a) => `${a.entityId} → ${a.service}`),
-      };
+      });
 
-      emitEvent(event);
-
-      if (binding.actions.length > 0) {
-        executeActions(binding.actions).catch(() => {});
-      }
+      if (binding.actions.length > 0) executeActions(binding.actions).catch(() => {});
     }
   }
 
@@ -288,23 +442,18 @@ export function processGestureFrame(
         if (now - lastFired < b.cooldown) inCooldown.push(b.id);
       }
       debugTargets.push({
-        targetId,
-        nodeId,
-        dx,
-        dy,
+        targetId, nodeId, dx, dy,
         dist: Math.hypot(dx, dy),
         scores: computeGestureScores(history, 1),
         inCooldown,
       });
     }
-    if (debugTargets.length > 0) {
-      for (const cb of debugListeners) cb(debugTargets);
-      lastDebugEmit = now;
-    }
+    for (const cb of debugListeners) cb(debugTargets);
+    lastDebugEmit = now;
   }
 
   for (const [key, history] of targetHistories) {
-    if (history.samples.length > 0 && now - history.samples[history.samples.length - 1].time > 3000) {
+    if (now - history.lastActivity > STALE_HISTORY_MS) {
       targetHistories.delete(key);
     }
   }
