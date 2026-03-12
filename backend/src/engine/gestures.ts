@@ -66,17 +66,17 @@ const GHOST_POS_M           = 0.06;
 const GHOST_SPD_MS          = 0.06;
 
 const IDLE_SPREAD_M         = 0.045;
-const MIN_MEDIAN_SPEED      = 0.10;
-const MIN_SPEED_RANGE       = 0.15;
+const MIN_MEDIAN_SPEED      = 0.22;
+const MIN_SPEED_RANGE       = 0.38;
 
 const BASE_DISP_M           = 0.25;
 const BASE_PATH_M           = 0.20;
 const MIN_LINEARITY         = 0.60;
 const MIN_AXIS_RATIO        = 1.8;
 const MIN_CONSISTENCY       = 0.65;
-const BASE_PEAK_SPD         = 0.25;
+const BASE_PEAK_SPD         = 0.55;
 const MIN_PEAK_MEAN_RATIO   = 1.4;
-const PUSH_PEAK_SPD         = 0.55;
+const PUSH_PEAK_SPD         = 1.00;
 const SETTLING_RATIO        = 0.80;
 const MIN_CONFIDENCE        = 0.45;
 
@@ -88,12 +88,11 @@ const WAVE_AMP_CV_MAX       = 0.50;
 const WAVE_PERIOD_CV_MAX    = 0.55;
 
 const BASE_SPEED_THRESH     = 0.08;
-const BASE_FRESH_MS         = 2500;
+const BASE_FRESH_MS         = 3000;
 const BASE_SPREAD_M         = 0.08;
 const MAX_DISP_M            = 0.72;
 const PRE_PHASE_FRAC        = 0.25;
-const PRE_MAX_SPEED         = 0.14;
-const PRE_DISP_MAX          = 0.15;
+const PRE_DISP_MAX          = 0.25;
 
 const targetHistories = new Map<string, TargetHistory>();
 const eventListeners = new Set<GestureEventCallback>();
@@ -150,28 +149,32 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
   let pathLen = 0;
   let peakSpeed = 0;
   let peakIdx = 0;
-  let minSpeed = samples[0].speed;
+  let minSpeed = Infinity;
   let totalSpeed = 0;
   let swDx = 0;
   let swDy = 0;
+  const allPosSpeeds: number[] = [];
 
   for (let i = 1; i < samples.length; i++) {
     const sdx = samples[i].x - samples[i - 1].x;
     const sdy = samples[i].y - samples[i - 1].y;
-    pathLen += Math.sqrt(sdx * sdx + sdy * sdy);
-    const spd = samples[i].speed;
-    totalSpeed += spd;
-    if (spd > peakSpeed) { peakSpeed = spd; peakIdx = i; }
-    if (spd < minSpeed) minSpeed = spd;
-    swDx += sdx * spd;
-    swDy += sdy * spd;
+    const stepDist = Math.sqrt(sdx * sdx + sdy * sdy);
+    const dtSec = Math.max((samples[i].time - samples[i - 1].time) / 1000, 0.016);
+    const posSpd = stepDist / dtSec;
+    pathLen += stepDist;
+    totalSpeed += posSpd;
+    allPosSpeeds.push(posSpd);
+    if (posSpd > peakSpeed) { peakSpeed = posSpd; peakIdx = i; }
+    if (posSpd < minSpeed) minSpeed = posSpd;
+    swDx += sdx * posSpd;
+    swDy += sdy * posSpd;
   }
 
   const n = samples.length - 1;
   const avgSpeed = totalSpeed / n;
   const linearity = pathLen > 0.001 ? clamp(netDist / pathLen, 0, 1) : 0;
   const peakSpeedPos = n > 0 ? peakIdx / n : 0;
-  const speedRange = peakSpeed - minSpeed;
+  const speedRange = peakSpeed - (isFinite(minSpeed) ? minSpeed : 0);
 
   let sumPosX = 0, sumPosY = 0;
   for (const s of samples) { sumPosX += s.x; sumPosY += s.y; }
@@ -185,15 +188,15 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
   const spreadX = Math.sqrt(varPosX / samples.length);
   const spreadY = Math.sqrt(varPosY / samples.length);
 
-  const sortedSpeeds = samples.map(s => s.speed).sort((a, b) => a - b);
+  const sortedSpeeds = [...allPosSpeeds].sort((a, b) => a - b);
   const mid = Math.floor(sortedSpeeds.length / 2);
   const medianSpeed = sortedSpeeds.length % 2 !== 0
     ? sortedSpeeds[mid]
     : (sortedSpeeds[mid - 1] + sortedSpeeds[mid]) / 2;
 
-  const tailCount = Math.max(2, Math.round(samples.length * 0.22));
+  const tailCount = Math.max(2, Math.round(allPosSpeeds.length * 0.22));
   let tailTotal = 0;
-  for (let i = samples.length - tailCount; i < samples.length; i++) tailTotal += samples[i].speed;
+  for (let i = allPosSpeeds.length - tailCount; i < allPosSpeeds.length; i++) tailTotal += allPosSpeeds[i];
   const tailAvgSpeed = tailTotal / tailCount;
 
   const absSwDx = Math.abs(swDx);
@@ -301,10 +304,6 @@ function detectDirectional(
   if (history.baseX === null || (Date.now() - history.baseUpdated) > BASE_FRESH_MS) return null;
 
   const preCount = Math.max(3, Math.round(samples.length * PRE_PHASE_FRAC));
-  let preSum = 0;
-  for (let i = 0; i < preCount; i++) preSum += samples[i].speed;
-  if (preSum / preCount > PRE_MAX_SPEED) return null;
-
   const preNetDx = samples[preCount - 1].x - samples[0].x;
   const preNetDy = samples[preCount - 1].y - samples[0].y;
   if (Math.sqrt(preNetDx * preNetDx + preNetDy * preNetDy) > PRE_DISP_MAX) return null;
