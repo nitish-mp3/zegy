@@ -15,6 +15,9 @@ interface TargetHistory {
   samples: MotionSample[];
   lastGestureTime: Map<string, number>;
   lastActivity: number;
+  baseX: number | null;
+  baseY: number | null;
+  baseUpdated: number;
 }
 
 interface TrajectoryFeatures {
@@ -84,6 +87,14 @@ const WAVE_MAX_Y_RATIO      = 0.45;
 const WAVE_AMP_CV_MAX       = 0.50;
 const WAVE_PERIOD_CV_MAX    = 0.55;
 
+const BASE_SPEED_THRESH     = 0.08;
+const BASE_FRESH_MS         = 2500;
+const BASE_SPREAD_M         = 0.08;
+const MAX_DISP_M            = 0.72;
+const PRE_PHASE_FRAC        = 0.25;
+const PRE_MAX_SPEED         = 0.14;
+const PRE_DISP_MAX          = 0.15;
+
 const targetHistories = new Map<string, TargetHistory>();
 const eventListeners = new Set<GestureEventCallback>();
 const debugListeners = new Set<GestureDebugCallback>();
@@ -115,7 +126,7 @@ function emitEvent(event: GestureEvent): void {
 function getHistory(key: string, now: number): TargetHistory {
   let h = targetHistories.get(key);
   if (!h) {
-    h = { samples: [], lastGestureTime: new Map(), lastActivity: now };
+    h = { samples: [], lastGestureTime: new Map(), lastActivity: now, baseX: null, baseY: null, baseUpdated: 0 };
     targetHistories.set(key, h);
   }
   return h;
@@ -216,8 +227,16 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
 function detectWave(
   samples: MotionSample[],
   sens: number,
+  history: TargetHistory,
 ): { type: GestureType; confidence: number } | null {
   if (samples.length < WAVE_MIN_SAMPLES) return null;
+  if (history.baseX === null || (Date.now() - history.baseUpdated) > BASE_FRESH_MS) return null;
+
+  const wPreCount = Math.max(3, Math.round(samples.length * PRE_PHASE_FRAC));
+  const wPreNetDx = samples[wPreCount - 1].x - samples[0].x;
+  const wPreNetDy = samples[wPreCount - 1].y - samples[0].y;
+  if (Math.sqrt(wPreNetDx * wPreNetDx + wPreNetDy * wPreNetDy) > PRE_DISP_MAX) return null;
+
   const minAmp = WAVE_AMPLITUDE_M / Math.max(0.2, sens);
 
   const amplitudes: number[] = [];
@@ -275,8 +294,20 @@ function detectWave(
 function detectDirectional(
   samples: MotionSample[],
   sens: number,
+  history: TargetHistory,
 ): { type: GestureType; confidence: number } | null {
   if (samples.length < MIN_SAMPLES) return null;
+
+  if (history.baseX === null || (Date.now() - history.baseUpdated) > BASE_FRESH_MS) return null;
+
+  const preCount = Math.max(3, Math.round(samples.length * PRE_PHASE_FRAC));
+  let preSum = 0;
+  for (let i = 0; i < preCount; i++) preSum += samples[i].speed;
+  if (preSum / preCount > PRE_MAX_SPEED) return null;
+
+  const preNetDx = samples[preCount - 1].x - samples[0].x;
+  const preNetDy = samples[preCount - 1].y - samples[0].y;
+  if (Math.sqrt(preNetDx * preNetDx + preNetDy * preNetDy) > PRE_DISP_MAX) return null;
 
   const s = Math.max(0.2, sens);
   const m = extractFeatures(samples);
@@ -289,6 +320,7 @@ function detectDirectional(
   const minPeak  = BASE_PEAK_SPD / Math.sqrt(s);
 
   if (m.netDist < minDisp)                                        return null;
+  if (m.netDist > MAX_DISP_M)                                     return null;
   if (m.pathLen < minPath)                                        return null;
   if (m.linearity < MIN_LINEARITY)                                return null;
   if (m.axisRatio < MIN_AXIS_RATIO)                               return null;
@@ -327,9 +359,9 @@ function detectGesture(
   history: TargetHistory,
   sensitivity: number,
 ): { type: GestureType; confidence: number } | null {
-  const wave = detectWave(history.samples, sensitivity);
+  const wave = detectWave(history.samples, sensitivity, history);
   if (wave) return wave;
-  return detectDirectional(history.samples, sensitivity);
+  return detectDirectional(history.samples, sensitivity, history);
 }
 
 function computeGestureScores(
@@ -340,10 +372,10 @@ function computeGestureScores(
   if (samples.length < 3) return {};
   const scores: Partial<Record<GestureType, number>> = {};
 
-  const wave = detectWave(samples, sensitivity);
+  const wave = detectWave(samples, sensitivity, history);
   if (wave) scores.wave = wave.confidence;
 
-  const dir = detectDirectional(samples, sensitivity);
+  const dir = detectDirectional(samples, sensitivity, history);
   if (dir) { scores[dir.type] = dir.confidence; return scores; }
 
   const m = extractFeatures(samples);
@@ -427,6 +459,23 @@ export function processGestureFrame(
     while (history.samples.length > MAX_SAMPLES) history.samples.shift();
     const cutoff = now - WINDOW_MS;
     while (history.samples.length > 0 && history.samples[0].time < cutoff) history.samples.shift();
+
+    if (history.samples.length >= 4) {
+      const tail = history.samples.slice(-4);
+      const tailAvgSpd = tail.reduce((acc, v) => acc + v.speed, 0) / 4;
+      const tailMx = tail.reduce((acc, v) => acc + v.x, 0) / 4;
+      const tailMy = tail.reduce((acc, v) => acc + v.y, 0) / 4;
+      let tailSpreadSq = 0;
+      for (const s of tail) tailSpreadSq += (s.x - tailMx) ** 2 + (s.y - tailMy) ** 2;
+      const tailSpread = Math.sqrt(tailSpreadSq / 4);
+      if (tailAvgSpd < BASE_SPEED_THRESH && tailSpread < BASE_SPREAD_M) {
+        const bx = tail.reduce((acc, v) => acc + v.x, 0) / 4;
+        const by = tail.reduce((acc, v) => acc + v.y, 0) / 4;
+        history.baseX = history.baseX === null ? bx : history.baseX + (bx - history.baseX) * 0.25;
+        history.baseY = history.baseY === null ? by : history.baseY + (by - history.baseY) * 0.25;
+        history.baseUpdated = now;
+      }
+    }
 
     for (const binding of bindings) {
       if (!binding.enabled) continue;
