@@ -31,8 +31,12 @@ interface TrajectoryFeatures {
   consistency: number;
   peakSpeed: number;
   avgSpeed: number;
+  medianSpeed: number;
   peakSpeedPos: number;
   tailAvgSpeed: number;
+  speedRange: number;
+  spreadX: number;
+  spreadY: number;
   duration: number;
 }
 
@@ -50,24 +54,28 @@ type GestureDebugCallback = (targets: DebugTarget[]) => void;
 
 const WINDOW_MS             = 1000;
 const MIN_SAMPLES           = 8;
-const MIN_DURATION_MS       = 220;
+const MIN_DURATION_MS       = 250;
 const MAX_SAMPLES           = 60;
 const DEBUG_INTERVAL_MS     = 150;
 const STALE_HISTORY_MS      = 5000;
-const NOISE_STEP_M          = 0.012;
+const NOISE_STEP_M          = 0.018;
 const GHOST_POS_M           = 0.06;
 const GHOST_SPD_MS          = 0.06;
 
+const IDLE_SPREAD_M         = 0.045;
+const MIN_MEDIAN_SPEED      = 0.10;
+const MIN_SPEED_RANGE       = 0.15;
+
 const BASE_DISP_M           = 0.25;
 const BASE_PATH_M           = 0.20;
-const MIN_LINEARITY         = 0.62;
-const MIN_AXIS_RATIO        = 2.2;
-const MIN_CONSISTENCY       = 0.68;
-const BASE_PEAK_SPD         = 0.22;
-const MIN_PEAK_MEAN_RATIO   = 1.35;
+const MIN_LINEARITY         = 0.60;
+const MIN_AXIS_RATIO        = 1.8;
+const MIN_CONSISTENCY       = 0.65;
+const BASE_PEAK_SPD         = 0.25;
+const MIN_PEAK_MEAN_RATIO   = 1.4;
 const PUSH_PEAK_SPD         = 0.55;
 const SETTLING_RATIO        = 0.80;
-const MIN_CONFIDENCE        = 0.42;
+const MIN_CONFIDENCE        = 0.45;
 
 const WAVE_MIN_SAMPLES      = 10;
 const WAVE_MIN_CYCLES       = 2;
@@ -131,6 +139,7 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
   let pathLen = 0;
   let peakSpeed = 0;
   let peakIdx = 0;
+  let minSpeed = samples[0].speed;
   let totalSpeed = 0;
   let swDx = 0;
   let swDy = 0;
@@ -142,6 +151,7 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
     const spd = samples[i].speed;
     totalSpeed += spd;
     if (spd > peakSpeed) { peakSpeed = spd; peakIdx = i; }
+    if (spd < minSpeed) minSpeed = spd;
     swDx += sdx * spd;
     swDy += sdy * spd;
   }
@@ -150,6 +160,25 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
   const avgSpeed = totalSpeed / n;
   const linearity = pathLen > 0.001 ? clamp(netDist / pathLen, 0, 1) : 0;
   const peakSpeedPos = n > 0 ? peakIdx / n : 0;
+  const speedRange = peakSpeed - minSpeed;
+
+  let sumPosX = 0, sumPosY = 0;
+  for (const s of samples) { sumPosX += s.x; sumPosY += s.y; }
+  const meanPosX = sumPosX / samples.length;
+  const meanPosY = sumPosY / samples.length;
+  let varPosX = 0, varPosY = 0;
+  for (const s of samples) {
+    varPosX += (s.x - meanPosX) ** 2;
+    varPosY += (s.y - meanPosY) ** 2;
+  }
+  const spreadX = Math.sqrt(varPosX / samples.length);
+  const spreadY = Math.sqrt(varPosY / samples.length);
+
+  const sortedSpeeds = samples.map(s => s.speed).sort((a, b) => a - b);
+  const mid = Math.floor(sortedSpeeds.length / 2);
+  const medianSpeed = sortedSpeeds.length % 2 !== 0
+    ? sortedSpeeds[mid]
+    : (sortedSpeeds[mid - 1] + sortedSpeeds[mid]) / 2;
 
   const tailCount = Math.max(2, Math.round(samples.length * 0.22));
   let tailTotal = 0;
@@ -179,7 +208,8 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
   return {
     netDx, netDy, netDist, pathLen, linearity,
     swDx, swDy, axisRatio, dominantAxis, axisSign, consistency,
-    peakSpeed, avgSpeed, peakSpeedPos, tailAvgSpeed, duration,
+    peakSpeed, avgSpeed, medianSpeed, peakSpeedPos, tailAvgSpeed,
+    speedRange, spreadX, spreadY, duration,
   };
 }
 
@@ -267,6 +297,11 @@ function detectDirectional(
   if (m.peakSpeedPos < 0.08 || m.peakSpeedPos > 0.93)            return null;
   if (m.avgSpeed > 0 && m.peakSpeed < m.avgSpeed * MIN_PEAK_MEAN_RATIO) return null;
   if (m.duration > 500 && m.tailAvgSpeed > m.peakSpeed * SETTLING_RATIO) return null;
+
+  const spreadDom = m.dominantAxis === "x" ? m.spreadX : m.spreadY;
+  if (spreadDom < IDLE_SPREAD_M)                                      return null;
+  if (m.medianSpeed < MIN_MEDIAN_SPEED)                               return null;
+  if (m.speedRange < MIN_SPEED_RANGE)                                 return null;
 
   const dispScore   = clamp((m.netDist  - minDisp) / (minDisp * 2.0),         0, 1);
   const linScore    = clamp((m.linearity - MIN_LINEARITY) / (1 - MIN_LINEARITY), 0, 1);

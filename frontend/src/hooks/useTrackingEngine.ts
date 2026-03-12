@@ -49,8 +49,8 @@ const TARGET_TIMEOUT_MS = 15000;
 const FADE_MS = 3000;
 const MAX_JUMP_M = 1.25;
 const MAX_REASSIGN_M = 1.0;
-const STATIONARY_SPEED_MS = 0.08;
-const STATIONARY_LOCK_M = 0.16;
+const STATIONARY_SPEED_MS = 0.06;
+const STATIONARY_LOCK_M = 0.12;
 const ECHO_GRID = 0.25;
 const ECHO_SPEED_THRESHOLD = 0.04;
 const ECHO_GAIN = 0.04;
@@ -113,9 +113,9 @@ export function useTrackingEngine() {
         const existing = map.get(bestKey)!;
         existing.rawX = t.x;
         existing.rawY = t.y;
-        existing.speed = lerp(existing.speed, t.speed, 0.45);
+        existing.speed = lerp(existing.speed, t.speed, t.speed > existing.speed ? 0.45 : 0.22);
         existing.lastSeen = now;
-        existing.opacity = 1;
+        if (existing.opacity < 1) existing.opacity = Math.min(1, existing.opacity + 0.15);
       } else {
         const key = `${nodeId}:uid-${nextIdRef.current++}`;
         map.set(key, {
@@ -127,7 +127,7 @@ export function useTrackingEngine() {
           y: t.y,
           speed: t.speed,
           lastSeen: now,
-          opacity: 1,
+          opacity: 0.15,
         });
       }
 
@@ -167,6 +167,8 @@ export function useTrackingEngine() {
             map.delete(key);
             continue;
           }
+        } else if (target.opacity < 1) {
+          target.opacity = Math.min(1, target.opacity + dt / 250);
         }
 
         const dx = target.rawX - target.x;
@@ -181,7 +183,7 @@ export function useTrackingEngine() {
             target.x = target.rawX;
             target.y = target.rawY;
           } else {
-            const lockT = 1 - Math.pow(1 - 0.04, dt / 16.67);
+            const lockT = 1 - Math.pow(1 - 0.06, dt / 16.67);
             target.x = lerp(target.x, target.rawX, lockT);
             target.y = lerp(target.y, target.rawY, lockT);
           }
