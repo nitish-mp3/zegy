@@ -15,7 +15,7 @@ import {
   type AffineParams,
 } from "../utils/calibration";
 import ZoneCanvas, { type EditorMode, type ZonePoint, type StaticEcho } from "../components/ZoneCanvas";
-import { useTrackingEngine } from "../hooks/useTrackingEngine";
+import { useTrackingEngine, type Posture } from "../hooks/useTrackingEngine";
 
 /* ---- Constants ---- */
 
@@ -41,7 +41,7 @@ function getServicesForEntity(entityId: string): string[] {
 
 /* ---- Types ---- */
 
-interface TrackTarget { id: number; x: number; y: number; speed: number; opacity?: number; stale?: boolean; nodeId?: string; lastSeen?: number }
+interface TrackTarget { id: number; x: number; y: number; speed: number; opacity?: number; stale?: boolean; nodeId?: string; lastSeen?: number; posture?: Posture }
 interface TrackHistoryPoint { id: string; x: number; y: number; ageMs: number }
 interface UndoEntry { zones: Zone[]; description: string }
 

@@ -71,11 +71,14 @@ export interface SensorNode {
   status: "online" | "offline" | "unknown";
 }
 
+export type Posture = "standing" | "sitting" | "unknown";
+
 export interface TrackTarget {
   id: number;
   x: number;
   y: number;
   speed: number;
+  posture: Posture;
 }
 
 export interface TrackFrame {

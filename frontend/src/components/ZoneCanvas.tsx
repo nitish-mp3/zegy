@@ -18,6 +18,8 @@ export interface Zone {
   state?: { occupied: boolean; targetCount: number };
 }
 
+export type Posture = "standing" | "sitting" | "unknown";
+
 export interface TrackTarget {
   id: number;
   x: number;
@@ -27,6 +29,7 @@ export interface TrackTarget {
   stale?: boolean;
   nodeId?: string;
   lastSeen?: number;
+  posture?: Posture;
 }
 
 export interface StaticEcho {
@@ -597,6 +600,8 @@ export default memo(function ZoneCanvas({
           const alpha = t.opacity ?? 1;
           const isStale = t.stale ?? false;
           const isStationary = t.speed < 0.06;
+          const posture = t.posture ?? "unknown";
+          const isSitting = posture === "sitting";
           const staleAgeSec = isStale && t.lastSeen ? Math.round((Date.now() - t.lastSeen) / 1000) : 0;
           return (
             <g key={`track-${t.nodeId ?? "?"}-${t.id}`} opacity={alpha} className="pointer-events-none">
@@ -618,20 +623,22 @@ export default memo(function ZoneCanvas({
                 <>
                   {/* Soft glow halo */}
                   <circle cx={s.x} cy={s.y} r={18} fill={color} fillOpacity={0.07} />
-                  {/* Outer ring */}
-                  <circle cx={s.x} cy={s.y} r={11} fill="none" stroke={color} strokeWidth={1} opacity={0.4} />
+                  {/* Outer ring — dashed for sitting */}
+                  <circle cx={s.x} cy={s.y} r={11} fill="none" stroke={color} strokeWidth={isSitting ? 1.5 : 1} opacity={0.4} strokeDasharray={isSitting ? "3 2" : undefined} />
                   {/* Main dot */}
                   <circle cx={s.x} cy={s.y} r={6} fill={color} stroke="rgba(0,0,0,0.5)" strokeWidth={1.5} />
-                  {/* Stationary indicator */}
-                  {isStationary && (
+                  {/* Posture indicator */}
+                  {isSitting ? (
+                    <rect x={s.x - 2} y={s.y - 2} width={4} height={4} rx={0.5} fill="white" fillOpacity={0.8} />
+                  ) : isStationary ? (
                     <circle cx={s.x} cy={s.y} r={2.5} fill="white" fillOpacity={0.7} />
-                  )}
+                  ) : null}
                   {showLabels && (
                     <g className="select-none">
-                      <rect x={s.x + 11} y={s.y - 14} width={46} height={30} rx={3} fill="rgba(0,0,0,0.5)" />
+                      <rect x={s.x + 11} y={s.y - 14} width={52} height={30} rx={3} fill="rgba(0,0,0,0.5)" />
                       <text x={s.x + 15} y={s.y - 4} fill={color} fontSize={8} fontWeight="600">T{i + 1}</text>
                       <text x={s.x + 15} y={s.y + 6} fill="#9ca3af" fontSize={7}>
-                        {isStationary ? "stationary" : `${t.speed.toFixed(1)} m/s`}
+                        {isSitting ? "sitting" : isStationary ? "standing" : `${t.speed.toFixed(1)} m/s`}
                       </text>
                       <text x={s.x + 15} y={s.y + 15} fill="#6b7280" fontSize={6}>
                         {t.x.toFixed(1)}, {t.y.toFixed(1)}

@@ -4,6 +4,15 @@ import { logger } from "../logger";
 
 type ZoneEventCallback = (event: ZoneEvent) => void;
 
+const STATIONARY_SPEED_THRESH = 0.10;
+const STATIONARY_HOLD_MS = 15_000;
+
+interface StationaryRecord {
+  lastSeen: number;
+  x: number;
+  y: number;
+}
+
 interface ZoneState {
   occupied: boolean;
   targetCount: number;
@@ -11,6 +20,7 @@ interface ZoneState {
   lastSeen: number | null;
   dwellSatisfied: boolean;
   exitTimer: ReturnType<typeof setTimeout> | null;
+  stationaryTargets: Map<number, StationaryRecord>;
 }
 
 const zoneStates = new Map<string, ZoneState>();
@@ -39,6 +49,7 @@ function getState(zoneId: string): ZoneState {
       lastSeen: null,
       dwellSatisfied: false,
       exitTimer: null,
+      stationaryTargets: new Map(),
     };
     zoneStates.set(zoneId, s);
   }
@@ -95,25 +106,43 @@ export function processTrackFrame(frame: TrackFrame, zones: Zone[]): void {
     );
 
     const state = getState(zone.id);
-    const isOccupied = targetsInZone.length > 0;
 
-    state.targetCount = targetsInZone.length;
+    for (const t of targetsInZone) {
+      if (t.speed < STATIONARY_SPEED_THRESH) {
+        state.stationaryTargets.set(t.id, { lastSeen: now, x: t.x, y: t.y });
+      } else {
+        state.stationaryTargets.delete(t.id);
+      }
+    }
+
+    const activeTargetIds = new Set(targetsInZone.map((t) => t.id));
+    for (const [tid, rec] of state.stationaryTargets) {
+      if (!activeTargetIds.has(tid) && (now - rec.lastSeen) > STATIONARY_HOLD_MS) {
+        state.stationaryTargets.delete(tid);
+      }
+    }
+
+    const directCount = targetsInZone.length;
+    const heldStationaryCount = [...state.stationaryTargets.entries()]
+      .filter(([tid]) => !activeTargetIds.has(tid))
+      .length;
+    const effectiveCount = directCount + heldStationaryCount;
+    const isOccupied = effectiveCount > 0;
+
+    state.targetCount = effectiveCount;
 
     if (isOccupied) {
       state.lastSeen = now;
 
-      // Cancel pending exit
       if (state.exitTimer) {
         clearTimeout(state.exitTimer);
         state.exitTimer = null;
       }
 
-      // Start dwell timer tracking
       if (!state.enterTime) {
         state.enterTime = now;
       }
 
-      // Check dwell time satisfaction
       if (!state.dwellSatisfied && (now - state.enterTime >= zone.dwellTime)) {
         state.dwellSatisfied = true;
         state.occupied = true;
@@ -124,7 +153,7 @@ export function processTrackFrame(frame: TrackFrame, zones: Zone[]): void {
           zoneName: zone.name,
           type: "enter",
           timestamp: new Date().toISOString(),
-          targetCount: targetsInZone.length,
+          targetCount: effectiveCount,
         };
         emitEvent(event);
 
@@ -133,13 +162,13 @@ export function processTrackFrame(frame: TrackFrame, zones: Zone[]): void {
         }
       }
     } else {
-      // No targets in zone
       if (state.occupied && !state.exitTimer) {
         state.exitTimer = setTimeout(() => {
           state.occupied = false;
           state.dwellSatisfied = false;
           state.enterTime = null;
           state.exitTimer = null;
+          state.stationaryTargets.clear();
 
           const event: ZoneEvent = {
             id: `ze-${++eventCounter}`,

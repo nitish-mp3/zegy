@@ -18,6 +18,8 @@ interface TargetHistory {
   baseX: number | null;
   baseY: number | null;
   baseUpdated: number;
+  inZone: boolean;
+  zoneId: string | null;
 }
 
 interface TrajectoryFeatures {
@@ -125,7 +127,7 @@ function emitEvent(event: GestureEvent): void {
 function getHistory(key: string, now: number): TargetHistory {
   let h = targetHistories.get(key);
   if (!h) {
-    h = { samples: [], lastGestureTime: new Map(), lastActivity: now, baseX: null, baseY: null, baseUpdated: 0 };
+    h = { samples: [], lastGestureTime: new Map(), lastActivity: now, baseX: null, baseY: null, baseUpdated: 0, inZone: false, zoneId: null };
     targetHistories.set(key, h);
   }
   return h;
@@ -454,6 +456,18 @@ export function processGestureFrame(
     const history = getHistory(key, now);
     history.lastActivity = now;
 
+    let currentInZone = false;
+    let currentZoneId: string | null = null;
+    for (const zone of zones) {
+      if (isInZone(target.x, target.y, zone.points)) {
+        currentInZone = true;
+        currentZoneId = zone.id;
+        break;
+      }
+    }
+    history.inZone = currentInZone;
+    history.zoneId = currentZoneId;
+
     history.samples.push({ x: target.x, y: target.y, speed: target.speed, time: now });
     while (history.samples.length > MAX_SAMPLES) history.samples.shift();
     const cutoff = now - WINDOW_MS;
@@ -536,7 +550,9 @@ export function processGestureFrame(
   }
 
   for (const [key, history] of targetHistories) {
-    if (now - history.lastActivity > STALE_HISTORY_MS) {
+    const age = now - history.lastActivity;
+    const staleThreshold = history.inZone ? STALE_HISTORY_MS * 2 : STALE_HISTORY_MS;
+    if (age > staleThreshold) {
       targetHistories.delete(key);
     }
   }

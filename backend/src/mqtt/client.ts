@@ -12,8 +12,15 @@ interface FilteredTrack {
   rawY: number;
   x: number;
   y: number;
+  vx: number;
+  vy: number;
   speed: number;
   lastSeen: number;
+  age: number;
+  coastCount: number;
+  stationarySince: number;
+  posture: "standing" | "sitting" | "unknown";
+  positionHistory: Array<{ x: number; y: number; t: number }>;
 }
 
 let client: mqtt.MqttClient | null = null;
@@ -23,10 +30,23 @@ const latestTargets = new Map<string, TrackTarget[]>();
 const filteredTracks = new Map<string, FilteredTrack>();
 let staleTimer: ReturnType<typeof setInterval> | null = null;
 const NODE_STALE_MS = 120_000;
-const TRACK_HOLD_MS = 2_500;
+const TRACK_HOLD_MS = 4_000;
+const TRACK_HOLD_STATIONARY_MS = 12_000;
 const TRACK_MATCH_DISTANCE_M = 1.1;
+const TRACK_VELOCITY_GATE = 1.8;
+const TRACK_PREDICTION_DT = 0.15;
+const TRACK_MAX_COAST = 8;
+const TRACK_MAX_COAST_STATIONARY = 24;
+const TRACK_MIN_AGE_FOR_PRIORITY = 2000;
 const TRACK_ALPHA_MIN = 0.18;
 const TRACK_ALPHA_MAX = 0.62;
+const STATIONARY_SPEED_THRESH = 0.08;
+const STATIONARY_CONFIRM_MS = 3000;
+const POSTURE_WINDOW_SIZE = 30;
+const POSTURE_SITTING_VARIANCE_M = 0.035;
+const POSTURE_SITTING_MIN_SAMPLES = 15;
+const POSTURE_SITTING_STATIONARITY_MS = 8000;
+const POSTURE_STANDING_STATIONARITY_MS = 3000;
 let nextFilteredTrackId = 1;
 
 // Track the MQTT nodeId ↔ internal node.id mapping for stale cleanup
@@ -56,6 +76,57 @@ export function getLatestTargets(): Map<string, TrackTarget[]> {
   return latestTargets;
 }
 
+// Clean up tracks that haven't been updated for a long time to prevent memory bloat [10/41] [13/03/26]
+
+function isTrackStationary(track: FilteredTrack, now: number): boolean {
+  return track.stationarySince > 0 && (now - track.stationarySince) >= STATIONARY_CONFIRM_MS;
+}
+
+function classifyPosture(track: FilteredTrack, now: number): "standing" | "sitting" | "unknown" {
+  if (track.stationarySince === 0) return "standing";
+
+  const stationaryDuration = now - track.stationarySince;
+  if (stationaryDuration < POSTURE_STANDING_STATIONARITY_MS) return "unknown";
+
+  const history = track.positionHistory;
+  if (history.length < POSTURE_SITTING_MIN_SAMPLES) {
+    return stationaryDuration >= POSTURE_SITTING_STATIONARITY_MS ? "sitting" : "standing";
+  }
+
+  let sumX = 0, sumY = 0;
+  for (const p of history) { sumX += p.x; sumY += p.y; }
+  const meanX = sumX / history.length;
+  const meanY = sumY / history.length;
+
+  let variance = 0;
+  for (const p of history) {
+    const dx = p.x - meanX;
+    const dy = p.y - meanY;
+    variance += dx * dx + dy * dy;
+  }
+  variance = Math.sqrt(variance / history.length);
+
+  if (variance <= POSTURE_SITTING_VARIANCE_M && stationaryDuration >= POSTURE_SITTING_STATIONARITY_MS) {
+    return "sitting";
+  }
+
+  return stationaryDuration >= POSTURE_STANDING_STATIONARITY_MS ? "standing" : "unknown";
+}
+
+function cleanUpOldTracks(): void {
+  const now = Date.now();
+  for (const [key, track] of filteredTracks) {
+    const stationary = isTrackStationary(track, now);
+    const holdMs = stationary ? TRACK_HOLD_STATIONARY_MS : TRACK_HOLD_MS;
+    const maxCoast = stationary ? TRACK_MAX_COAST_STATIONARY : TRACK_MAX_COAST;
+    if (now - track.lastSeen > holdMs * 2 || track.coastCount > maxCoast + 2) {
+      filteredTracks.delete(key);
+    }
+  }
+}
+
+
+
 function transformTargets(
   raw: { id: number; x: number; y: number; speed: number }[],
   node: SensorNode,
@@ -69,6 +140,7 @@ function transformTargets(
     x: node.x + (t.x * cos - t.y * sin) * node.scale,
     y: node.y - (t.x * sin + t.y * cos) * node.scale,
     speed: t.speed,
+    posture: "unknown" as const,
   }));
 }
 
@@ -88,37 +160,117 @@ function getAdaptiveAlpha(speed: number, dist: number): number {
 
 function stabilizeTargets(nodeId: string, rawTargets: TrackTarget[]): TrackTarget[] {
   const now = Date.now();
+  cleanUpOldTracks();
   const existing = [...filteredTracks.entries()].filter(([, track]) => track.nodeId === nodeId);
-  const claimed = new Set<string>();
-  const output: TrackTarget[] = [];
 
-  for (const raw of rawTargets) {
-    let bestKey: string | null = null;
-    let bestDist = TRACK_MATCH_DISTANCE_M;
+  existing.sort(([, a], [, b]) => b.age - a.age);
 
-    for (const [key, track] of existing) {
-      if (claimed.has(key)) continue;
-      const dist = distance(raw, { x: track.rawX, y: track.rawY });
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestKey = key;
+  const associations: Array<{ trackKey: string; rawIdx: number; score: number }> = [];
+  const usedTracks = new Set<string>();
+  const usedRaws = new Set<number>();
+
+  for (const [trackKey, track] of existing) {
+    if (usedTracks.has(trackKey)) continue;
+
+    const dtSec = clamp((now - track.lastSeen) / 1000, 0.05, 0.35);
+    const predX = track.x + track.vx * dtSec;
+    const predY = track.y + track.vy * dtSec;
+
+    let bestRawIdx = -1;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < rawTargets.length; i++) {
+      if (usedRaws.has(i)) continue;
+
+      const raw = rawTargets[i];
+      const posDist = distance({ x: predX, y: predY }, raw);
+
+      if (posDist > TRACK_MATCH_DISTANCE_M) continue;
+
+      const candVx = (raw.x - track.x) / dtSec;
+      const candVy = (raw.y - track.y) / dtSec;
+      const velDist = Math.hypot(track.vx - candVx, track.vy - candVy);
+      if (velDist > TRACK_VELOCITY_GATE + posDist * 1.2) continue;
+
+      const score = posDist * 0.75 + Math.min(velDist, 3) * 0.25;
+      if (score < bestScore) {
+        bestScore = score;
+        bestRawIdx = i;
       }
     }
 
-    if (bestKey) {
-      claimed.add(bestKey);
-      const track = filteredTracks.get(bestKey)!;
-      const alpha = getAdaptiveAlpha(raw.speed, bestDist);
-      track.rawX = raw.x;
-      track.rawY = raw.y;
-      track.x += (raw.x - track.x) * alpha;
-      track.y += (raw.y - track.y) * alpha;
-      track.speed += (raw.speed - track.speed) * Math.min(alpha + 0.12, 0.82);
-      track.lastSeen = now;
-      output.push({ id: track.id, x: track.x, y: track.y, speed: track.speed });
-      continue;
+    if (bestRawIdx >= 0) {
+      associations.push({ trackKey, rawIdx: bestRawIdx, score: bestScore });
+      usedTracks.add(trackKey);
+      usedRaws.add(bestRawIdx);
+    }
+  }
+
+  for (const [trackKey, track] of existing) {
+    if (usedTracks.has(trackKey)) continue;
+
+    let bestRawIdx = -1;
+    let bestDist = TRACK_MATCH_DISTANCE_M;
+
+    for (let i = 0; i < rawTargets.length; i++) {
+      if (usedRaws.has(i)) continue;
+      const dist = distance(track, rawTargets[i]);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestRawIdx = i;
+      }
     }
 
+    if (bestRawIdx >= 0) {
+      associations.push({ trackKey, rawIdx: bestRawIdx, score: bestDist + 10 });
+      usedTracks.add(trackKey);
+      usedRaws.add(bestRawIdx);
+    }
+  }
+
+  const output: TrackTarget[] = [];
+  for (const assoc of associations) {
+    const track = filteredTracks.get(assoc.trackKey)!;
+    const raw = rawTargets[assoc.rawIdx];
+    const seenMs = Math.max(50, now - track.lastSeen);
+    const dtSec = clamp(seenMs / 1000, 0.05, 0.35);
+    const prevX = track.x;
+    const prevY = track.y;
+
+    const alpha = getAdaptiveAlpha(raw.speed, assoc.score);
+    track.rawX = raw.x;
+    track.rawY = raw.y;
+    track.x += (raw.x - track.x) * alpha;
+    track.y += (raw.y - track.y) * alpha;
+
+    track.vx = (track.x - prevX) / dtSec;
+    track.vy = (track.y - prevY) / dtSec;
+    track.speed = Math.sqrt(track.vx * track.vx + track.vy * track.vy);
+
+    if (track.speed < STATIONARY_SPEED_THRESH) {
+      if (track.stationarySince === 0) track.stationarySince = now;
+      track.positionHistory.push({ x: track.x, y: track.y, t: now });
+      if (track.positionHistory.length > POSTURE_WINDOW_SIZE) {
+        track.positionHistory.shift();
+      }
+      track.posture = classifyPosture(track, now);
+    } else {
+      track.stationarySince = 0;
+      track.posture = "standing";
+      track.positionHistory.length = 0;
+    }
+
+    track.lastSeen = now;
+    track.age += seenMs;
+    track.coastCount = 0;
+
+    output.push({ id: track.id, x: track.x, y: track.y, speed: track.speed, posture: track.posture });
+  }
+
+  for (let i = 0; i < rawTargets.length; i++) {
+    if (usedRaws.has(i)) continue;
+
+    const raw = rawTargets[i];
     const stableId = nextFilteredTrackId++;
     const key = `${nodeId}:stable-${stableId}`;
     filteredTracks.set(key, {
@@ -128,18 +280,41 @@ function stabilizeTargets(nodeId: string, rawTargets: TrackTarget[]): TrackTarge
       rawY: raw.y,
       x: raw.x,
       y: raw.y,
-      speed: raw.speed,
+      vx: 0,
+      vy: 0,
+      speed: 0,
       lastSeen: now,
+      age: 0,
+      coastCount: 0,
+      stationarySince: 0,
+      posture: "unknown",
+      positionHistory: [],
     });
-    output.push({ id: stableId, x: raw.x, y: raw.y, speed: raw.speed });
+    output.push({ id: stableId, x: raw.x, y: raw.y, speed: raw.speed, posture: "unknown" });
   }
 
   for (const [key, track] of existing) {
-    if (claimed.has(key)) continue;
+    if (usedTracks.has(key)) continue;
+
+    track.coastCount++;
+    const stationary = isTrackStationary(track, now);
+    const maxCoast = stationary ? TRACK_MAX_COAST_STATIONARY : TRACK_MAX_COAST;
+    const holdMs = stationary ? TRACK_HOLD_STATIONARY_MS : TRACK_HOLD_MS;
+    if (track.coastCount > maxCoast) {
+      filteredTracks.delete(key);
+      continue;
+    }
+
+    if (!stationary) {
+      track.x += track.vx * TRACK_PREDICTION_DT;
+      track.y += track.vy * TRACK_PREDICTION_DT;
+    }
+    track.speed *= 0.95;
+    track.age += TRACK_PREDICTION_DT * 1000;
+
     const age = now - track.lastSeen;
-    if (age <= TRACK_HOLD_MS) {
-      track.speed *= 0.9;
-      output.push({ id: track.id, x: track.x, y: track.y, speed: track.speed });
+    if (age <= holdMs) {
+      output.push({ id: track.id, x: track.x, y: track.y, speed: track.speed, posture: track.posture });
     } else {
       filteredTracks.delete(key);
     }
@@ -184,7 +359,6 @@ function handleTrackMessage(
 
 function handleStatusMessage(nodeId: string, data: { status?: string }): void {
   const status = data.status === "online" ? "online" as const : "offline" as const;
-  // Resolve internal node id from the MQTT topic nodeId so the status lookup in /api/nodes works
   const nodes = resolveNodes();
   const node = nodes.find((n) => n.mqttTopic === `zegy/${nodeId}` || n.mqttTopic === `zegy/${nodeId}/tracks`);
   const mapKey = node ? node.id : nodeId;

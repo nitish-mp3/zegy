@@ -1,10 +1,13 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
+export type Posture = "standing" | "sitting" | "unknown";
+
 export interface RawTarget {
   id: number;
   x: number;
   y: number;
   speed: number;
+  posture?: Posture;
 }
 
 export interface SmoothedTarget {
@@ -16,6 +19,7 @@ export interface SmoothedTarget {
   opacity: number;
   stale: boolean;
   lastSeen: number;
+  posture: Posture;
 }
 
 export interface StaticEcho {
@@ -34,6 +38,7 @@ interface TrackedTarget {
   speed: number;
   lastSeen: number;
   opacity: number;
+  posture: Posture;
 }
 
 interface EchoCell {
@@ -115,6 +120,7 @@ export function useTrackingEngine() {
         existing.rawY = t.y;
         existing.speed = lerp(existing.speed, t.speed, t.speed > existing.speed ? 0.45 : 0.22);
         existing.lastSeen = now;
+        existing.posture = t.posture ?? existing.posture;
         if (existing.opacity < 1) existing.opacity = Math.min(1, existing.opacity + 0.15);
       } else {
         const key = `${nodeId}:uid-${nextIdRef.current++}`;
@@ -128,6 +134,7 @@ export function useTrackingEngine() {
           speed: t.speed,
           lastSeen: now,
           opacity: 0.15,
+          posture: t.posture ?? "unknown",
         });
       }
 
@@ -205,6 +212,7 @@ export function useTrackingEngine() {
           opacity: v.opacity,
           stale: now - v.lastSeen > TARGET_TIMEOUT_MS,
           lastSeen: v.lastSeen,
+          posture: v.posture,
         });
       }
       output.sort((a, b) => a.nodeId.localeCompare(b.nodeId) || a.id - b.id);
