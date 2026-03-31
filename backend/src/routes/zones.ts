@@ -7,7 +7,11 @@ import { logger } from "../logger";
 const ZONES_FILE = "zones.json";
 
 export function loadZones(): Zone[] {
-  return loadJson<Zone[]>(ZONES_FILE, []);
+  const raw = loadJson<Zone[]>(ZONES_FILE, []);
+  return raw.map((z) => ({
+    ...z,
+    auxiliarySensors: Array.isArray(z.auxiliarySensors) ? z.auxiliarySensors : [],
+  }));
 }
 
 function saveZones(zones: Zone[]): void {
@@ -51,6 +55,9 @@ function validateZone(body: unknown): Zone | null {
     exitDelay: typeof b.exitDelay === "number" ? Math.max(0, b.exitDelay) : 30000,
     onEnter: validateActions(b.onEnter),
     onExit: validateActions(b.onExit),
+    auxiliarySensors: Array.isArray(b.auxiliarySensors)
+      ? (b.auxiliarySensors as unknown[]).filter((s): s is string => typeof s === "string")
+      : [],
   };
 }
 

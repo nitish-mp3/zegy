@@ -237,7 +237,9 @@ function stabilizeTargets(nodeId: string, rawTargets: TrackTarget[]): TrackTarge
     const prevX = track.x;
     const prevY = track.y;
 
-    const alpha = getAdaptiveAlpha(raw.speed, assoc.score);
+    const baseAlpha = getAdaptiveAlpha(raw.speed, assoc.score);
+    const ageBoost = track.age < 500 ? 0.30 : track.age < 1500 ? 0.12 : 0;
+    const alpha = Math.min(0.92, baseAlpha + ageBoost);
     track.rawX = raw.x;
     track.rawY = raw.y;
     track.x += (raw.x - track.x) * alpha;

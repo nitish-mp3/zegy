@@ -399,6 +399,7 @@ export default function FloorPlan() {
         exitDelay: 30000,
         onEnter: [],
         onExit: [],
+        auxiliarySensors: [],
       });
       setSelectedZoneId(zone.id);
       setShowNewZoneForm(false);
@@ -481,7 +482,7 @@ export default function FloorPlan() {
       roomWidth,
       roomHeight,
       calibration: serializeCalibration(calibration),
-      zones: zones.map((z) => ({ name: z.name, color: z.color, points: z.points, enabled: z.enabled, dwellTime: z.dwellTime, exitDelay: z.exitDelay, onEnter: z.onEnter, onExit: z.onExit })),
+      zones: zones.map((z) => ({ name: z.name, color: z.color, points: z.points, enabled: z.enabled, dwellTime: z.dwellTime, exitDelay: z.exitDelay, onEnter: z.onEnter, onExit: z.onExit, auxiliarySensors: z.auxiliarySensors })),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -518,6 +519,7 @@ export default function FloorPlan() {
               exitDelay: z.exitDelay ?? 30000,
               onEnter: z.onEnter ?? [],
               onExit: z.onExit ?? [],
+              auxiliarySensors: z.auxiliarySensors ?? [],
             });
           }
         }

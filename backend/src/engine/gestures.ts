@@ -57,44 +57,47 @@ interface DebugTarget {
 
 type GestureDebugCallback = (targets: DebugTarget[]) => void;
 
-const WINDOW_MS             = 1000;
-const MIN_SAMPLES           = 8;
-const MIN_DURATION_MS       = 250;
-const MAX_SAMPLES           = 60;
+const WINDOW_MS             = 1200;
+const MIN_SAMPLES           = 6;
+const MIN_DURATION_MS       = 200;
+const MAX_SAMPLES           = 80;
 const DEBUG_INTERVAL_MS     = 150;
 const STALE_HISTORY_MS      = 5000;
-const NOISE_STEP_M          = 0.018;
-const GHOST_POS_M           = 0.06;
-const GHOST_SPD_MS          = 0.06;
+const NOISE_STEP_M          = 0.025;
+const GHOST_POS_M           = 0.04;
+const GHOST_SPD_MS          = 0.04;
 
-const IDLE_SPREAD_M         = 0.045;
-const MIN_MEDIAN_SPEED      = 0.22;
-const MIN_SPEED_RANGE       = 0.38;
+const SPEED_SPAN            = 3;
+const MIN_BASE_DISP         = 0.12;
 
-const BASE_DISP_M           = 0.25;
-const BASE_PATH_M           = 0.20;
-const MIN_LINEARITY         = 0.60;
-const MIN_AXIS_RATIO        = 1.8;
-const MIN_CONSISTENCY       = 0.65;
-const BASE_PEAK_SPD         = 0.55;
-const MIN_PEAK_MEAN_RATIO   = 1.4;
-const PUSH_PEAK_SPD         = 1.00;
-const SETTLING_RATIO        = 0.80;
-const MIN_CONFIDENCE        = 0.45;
+const IDLE_SPREAD_M         = 0.05;
+const MIN_MEDIAN_SPEED      = 0.14;
+const MIN_SPEED_RANGE       = 0.20;
 
-const WAVE_MIN_SAMPLES      = 10;
+const BASE_DISP_M           = 0.14;
+const BASE_PATH_M           = 0.12;
+const MIN_LINEARITY         = 0.45;
+const MIN_AXIS_RATIO        = 1.4;
+const MIN_CONSISTENCY       = 0.50;
+const BASE_PEAK_SPD         = 0.38;
+const MIN_PEAK_MEAN_RATIO   = 1.25;
+const PUSH_PEAK_SPD         = 0.75;
+const SETTLING_RATIO        = 0.85;
+const MIN_CONFIDENCE        = 0.35;
+
+const WAVE_MIN_SAMPLES      = 8;
 const WAVE_MIN_CYCLES       = 2;
-const WAVE_AMPLITUDE_M      = 0.10;
-const WAVE_MAX_Y_RATIO      = 0.45;
-const WAVE_AMP_CV_MAX       = 0.50;
-const WAVE_PERIOD_CV_MAX    = 0.55;
+const WAVE_AMPLITUDE_M      = 0.08;
+const WAVE_MAX_Y_RATIO      = 0.50;
+const WAVE_AMP_CV_MAX       = 0.55;
+const WAVE_PERIOD_CV_MAX    = 0.60;
 
-const BASE_SPEED_THRESH     = 0.08;
-const BASE_FRESH_MS         = 3000;
-const BASE_SPREAD_M         = 0.08;
-const MAX_DISP_M            = 0.72;
-const PRE_PHASE_FRAC        = 0.25;
-const PRE_DISP_MAX          = 0.25;
+const BASE_SPEED_THRESH     = 0.12;
+const BASE_FRESH_MS         = 2000;
+const BASE_SPREAD_M         = 0.10;
+const MAX_DISP_M            = 0.90;
+const PRE_PHASE_FRAC        = 0.20;
+const PRE_DISP_MAX          = 0.12;
 
 const targetHistories = new Map<string, TargetHistory>();
 const eventListeners = new Set<GestureEventCallback>();
@@ -160,10 +163,14 @@ function extractFeatures(samples: MotionSample[]): TrajectoryFeatures | null {
   for (let i = 1; i < samples.length; i++) {
     const sdx = samples[i].x - samples[i - 1].x;
     const sdy = samples[i].y - samples[i - 1].y;
-    const stepDist = Math.sqrt(sdx * sdx + sdy * sdy);
-    const dtSec = Math.max((samples[i].time - samples[i - 1].time) / 1000, 0.016);
-    const posSpd = stepDist / dtSec;
-    pathLen += stepDist;
+    const frameDist = Math.sqrt(sdx * sdx + sdy * sdy);
+    pathLen += frameDist;
+
+    const j = Math.max(0, i - SPEED_SPAN);
+    const spanDist = Math.hypot(samples[i].x - samples[j].x, samples[i].y - samples[j].y);
+    const dtSec = Math.max((samples[i].time - samples[j].time) / 1000, 0.05);
+    const posSpd = spanDist / dtSec;
+
     totalSpeed += posSpd;
     allPosSpeeds.push(posSpd);
     if (posSpd > peakSpeed) { peakSpeed = posSpd; peakIdx = i; }
@@ -305,6 +312,13 @@ function detectDirectional(
 
   if (history.baseX === null || (Date.now() - history.baseUpdated) > BASE_FRESH_MS) return null;
 
+  let maxBaseDist = 0;
+  for (const s of samples) {
+    const bd = Math.hypot(s.x - history.baseX, s.y - history.baseY!);
+    if (bd > maxBaseDist) maxBaseDist = bd;
+  }
+  if (maxBaseDist < MIN_BASE_DISP) return null;
+
   const preCount = Math.max(3, Math.round(samples.length * PRE_PHASE_FRAC));
   const preNetDx = samples[preCount - 1].x - samples[0].x;
   const preNetDy = samples[preCount - 1].y - samples[0].y;
@@ -352,8 +366,10 @@ function detectDirectional(
   }
 
   const fastThresh = PUSH_PEAK_SPD / Math.sqrt(s);
-  if (m.axisSign < 0) return { type: m.peakSpeed >= fastThresh ? "push" : "approach", confidence };
-  return { type: m.peakSpeed >= fastThresh ? "pull" : "retreat", confidence };
+  if (m.peakSpeed >= fastThresh) {
+    return { type: m.axisSign > 0 ? "pull" : "push", confidence };
+  }
+  return { type: m.axisSign > 0 ? "swipe_down" : "swipe_up", confidence };
 }
 
 function detectGesture(
@@ -396,10 +412,11 @@ function computeGestureScores(
         scores[m.axisSign > 0 ? "swipe_right" : "swipe_left"] = partial;
       } else {
         const fastThresh = PUSH_PEAK_SPD / Math.sqrt(s);
-        const type: GestureType = m.axisSign < 0
-          ? (m.peakSpeed >= fastThresh ? "push" : "approach")
-          : (m.peakSpeed >= fastThresh ? "pull" : "retreat");
-        scores[type] = partial;
+        if (m.peakSpeed >= fastThresh) {
+          scores[m.axisSign > 0 ? "pull" : "push"] = partial;
+        } else {
+          scores[m.axisSign > 0 ? "swipe_down" : "swipe_up"] = partial;
+        }
       }
     }
   }
@@ -473,19 +490,18 @@ export function processGestureFrame(
     const cutoff = now - WINDOW_MS;
     while (history.samples.length > 0 && history.samples[0].time < cutoff) history.samples.shift();
 
-    if (history.samples.length >= 4) {
-      const tail = history.samples.slice(-4);
-      const tailAvgSpd = tail.reduce((acc, v) => acc + v.speed, 0) / 4;
-      const tailMx = tail.reduce((acc, v) => acc + v.x, 0) / 4;
-      const tailMy = tail.reduce((acc, v) => acc + v.y, 0) / 4;
+    if (history.samples.length >= 3) {
+      const tail = history.samples.slice(-3);
+      const tailAvgSpd = tail.reduce((acc, v) => acc + v.speed, 0) / 3;
+      const tailMx = tail.reduce((acc, v) => acc + v.x, 0) / 3;
+      const tailMy = tail.reduce((acc, v) => acc + v.y, 0) / 3;
       let tailSpreadSq = 0;
       for (const s of tail) tailSpreadSq += (s.x - tailMx) ** 2 + (s.y - tailMy) ** 2;
-      const tailSpread = Math.sqrt(tailSpreadSq / 4);
+      const tailSpread = Math.sqrt(tailSpreadSq / 3);
       if (tailAvgSpd < BASE_SPEED_THRESH && tailSpread < BASE_SPREAD_M) {
-        const bx = tail.reduce((acc, v) => acc + v.x, 0) / 4;
-        const by = tail.reduce((acc, v) => acc + v.y, 0) / 4;
-        history.baseX = history.baseX === null ? bx : history.baseX + (bx - history.baseX) * 0.25;
-        history.baseY = history.baseY === null ? by : history.baseY + (by - history.baseY) * 0.25;
+        const alpha = history.baseX === null ? 1.0 : 0.35;
+        history.baseX = history.baseX === null ? tailMx : history.baseX + (tailMx - history.baseX) * alpha;
+        history.baseY = history.baseY === null ? tailMy : history.baseY + (tailMy - history.baseY) * alpha;
         history.baseUpdated = now;
       }
     }

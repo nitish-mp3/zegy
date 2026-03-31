@@ -24,6 +24,7 @@ export interface Zone {
   exitDelay: number;
   onEnter: ActionStep[];
   onExit: ActionStep[];
+  auxiliarySensors: string[];
   state?: { occupied: boolean; targetCount: number };
 }
 

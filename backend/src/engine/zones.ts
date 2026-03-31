@@ -1,5 +1,6 @@
 import type { Zone, TrackFrame, ZoneEvent, ZonePoint } from "../types";
 import { callService } from "../ha/client";
+import { isAuxiliaryActive } from "./presence";
 import { logger } from "../logger";
 
 type ZoneEventCallback = (event: ZoneEvent) => void;
@@ -162,7 +163,11 @@ export function processTrackFrame(frame: TrackFrame, zones: Zone[]): void {
         }
       }
     } else {
-      if (state.occupied && !state.exitTimer) {
+      const auxActive = zone.auxiliarySensors?.length
+        ? isAuxiliaryActive(zone.auxiliarySensors)
+        : false;
+
+      if (state.occupied && !state.exitTimer && !auxActive) {
         state.exitTimer = setTimeout(() => {
           state.occupied = false;
           state.dwellSatisfied = false;
@@ -184,6 +189,11 @@ export function processTrackFrame(frame: TrackFrame, zones: Zone[]): void {
             executeActions(zone.onExit).catch(() => {});
           }
         }, zone.exitDelay);
+      }
+
+      if (auxActive && state.exitTimer) {
+        clearTimeout(state.exitTimer);
+        state.exitTimer = null;
       }
 
       if (!state.occupied) {

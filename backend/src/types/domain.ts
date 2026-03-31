@@ -57,6 +57,7 @@ export interface Zone {
   exitDelay: number;
   onEnter: ActionStep[];
   onExit: ActionStep[];
+  auxiliarySensors: string[];
 }
 
 export interface SensorNode {

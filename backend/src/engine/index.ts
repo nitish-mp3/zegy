@@ -13,3 +13,9 @@ export {
   getRecentGestureEvents,
   resetGestureStates,
 } from "./gestures";
+
+export {
+  initPresenceFusion,
+  isAuxiliaryActive,
+  getAuxiliaryStates,
+} from "./presence";

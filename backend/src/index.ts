@@ -3,7 +3,7 @@ import { logger } from "./logger";
 import { createServer } from "./server";
 import { startHaWebSocket, stopHaWebSocket } from "./ha";
 import { startMqtt, stopMqtt, onTrackFrame, setNodeResolver, setAutoCreateNode } from "./mqtt";
-import { processTrackFrame, onZoneEvent, processGestureFrame, onGestureEvent, onGestureDebug } from "./engine";
+import { processTrackFrame, onZoneEvent, processGestureFrame, onGestureEvent, onGestureDebug, initPresenceFusion } from "./engine";
 import { broadcastEvent } from "./ws";
 import { loadZones } from "./routes/zones";
 import { loadNodes, autoCreateNodeEntry } from "./routes/nodes";
@@ -34,6 +34,7 @@ async function main(): Promise<void> {
   const app = await createServer();
 
   startHaWebSocket();
+  initPresenceFusion();
 
   // Auto-discover MQTT broker from HA Supervisor if not configured
   await discoverMqttFromSupervisor();
