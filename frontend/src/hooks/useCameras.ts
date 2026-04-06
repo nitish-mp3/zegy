@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { CameraConfig, CameraGroup, CameraGestureBinding } from "../api/client";
+import type { CameraConfig, CameraGroup, CameraGestureBinding, CameraGestureType } from "../api/client";
 
 export type { CameraConfig, CameraGroup, CameraGestureBinding };
 
@@ -63,7 +63,7 @@ export function useCameras() {
   );
 
   const triggerGesture = useCallback(
-    async (id: string, gesture: "palm" | "fist") => {
+    async (id: string, gesture: CameraGestureType) => {
       return api.triggerCameraGesture(id, gesture);
     },
     [],

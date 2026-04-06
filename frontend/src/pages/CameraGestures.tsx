@@ -73,8 +73,10 @@ function Select({
 }
 
 function GestureIcon({ gesture, size = 24 }: { gesture: CameraGestureType; size?: number }) {
+  const def = CAMERA_GESTURE_DEFS[gesture];
+  if (!def) return null;
   const style: React.CSSProperties = { fontSize: size * 0.85, lineHeight: 1, display: "inline-block" };
-  return <span style={style} role="img">{CAMERA_GESTURE_DEFS[gesture].emoji}</span>;
+  return <span style={style} role="img">{def.emoji}</span>;
 }
 
 function AddCameraModal({
@@ -410,7 +412,10 @@ function GestureBindingEditor({
 
   return (
     <div className="space-y-3">
-      {gestures.map((binding) => (
+      {gestures.length === 0 && (
+        <p className="text-xs text-gray-600 text-center py-2">No bindings yet. Add a gesture below to control devices with your hand.</p>
+      )}
+      {gestures.filter((b) => !!CAMERA_GESTURE_DEFS[b.gesture]).map((binding) => (
         <div key={binding.id} className="bg-surface-overlay rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -748,13 +753,6 @@ function LivePreview({
       octx.clearRect(0, 0, w, h);
 
       if (result.landmarks) {
-        octx.strokeStyle = "#14b8a6";
-        octx.lineWidth = 2;
-        for (const lm of result.landmarks) {
-          octx.beginPath();
-          octx.arc(lm.x * w, lm.y * h, 3, 0, Math.PI * 2);
-          octx.fill();
-        }
         octx.fillStyle = "#14b8a6";
         for (const lm of result.landmarks) {
           octx.beginPath();
@@ -766,7 +764,7 @@ function LivePreview({
       const now = performance.now();
       setCurrentDetection({ gesture: result.gesture, confidence: result.confidence });
 
-      if (result.gesture && now > cooldownUntilRef.current) {
+      if (result.gesture && result.confidence > 0.55 && now > cooldownUntilRef.current) {
         if (lastGestureRef.current && lastGestureRef.current.gesture === result.gesture) {
           const held = now - lastGestureRef.current.since;
           const requiredHold = holdTimes[result.gesture] ?? 800;
@@ -807,7 +805,7 @@ function LivePreview({
       {currentDetection.gesture && (
         <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/70 text-white px-3 py-1.5 rounded-lg text-sm">
           <GestureIcon gesture={currentDetection.gesture} size={16} />
-          <span className="capitalize">{currentDetection.gesture}</span>
+          <span>{CAMERA_GESTURE_DEFS[currentDetection.gesture]?.label ?? currentDetection.gesture}</span>
           <span className="text-gray-400">{Math.round(currentDetection.confidence * 100)}%</span>
         </div>
       )}

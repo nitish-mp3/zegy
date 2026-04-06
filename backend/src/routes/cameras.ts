@@ -62,7 +62,7 @@ function validateActions(arr: unknown): ActionStep[] {
     }));
 }
 
-const VALID_GESTURE_TYPES: CameraGestureType[] = ["palm", "fist", "point", "peace", "thumbs_up"];
+const VALID_GESTURE_TYPES: CameraGestureType[] = ["palm", "fist", "point", "thumbs_up"];
 
 function validateGestureBinding(raw: unknown): CameraGestureBinding | null {
   const b = raw as Record<string, unknown>;
@@ -372,9 +372,15 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/cameras/discover", async (req, reply) => {
     const query = req.query as Record<string, string>;
-    const subnets = query.subnet
-      ? [query.subnet]
-      : getLocalSubnets();
+    let subnets: string[];
+    if (query.subnet) {
+      if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(query.subnet)) {
+        return reply.status(400).send({ error: "Invalid subnet format. Expected x.x.x (e.g. 192.168.1)" });
+      }
+      subnets = [query.subnet];
+    } else {
+      subnets = getLocalSubnets();
+    }
 
     if (subnets.length === 0) {
       return reply.send({ found: [], subnets: [] });
@@ -529,8 +535,8 @@ async function probeCameraHost(ip: string, port: number): Promise<DiscoveredCame
 }
 
 async function scanSubnet(subnet: string): Promise<DiscoveredCamera[]> {
-  const BATCH = 40;
-  const PORTS = [80, 8080, 8081];
+  const BATCH = 60;
+  const PORTS = [80, 8080];
   const found: DiscoveredCamera[] = [];
 
   const tasks: Array<() => Promise<void>> = [];

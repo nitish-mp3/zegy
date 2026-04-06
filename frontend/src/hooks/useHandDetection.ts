@@ -55,18 +55,6 @@ function classifyGesture(
   features: number[],
   calibration: CameraCalibration | null,
 ): { gesture: CameraGestureType | null; confidence: number } {
-  if (calibration && calibration.palmFeatures.length > 0 && calibration.fistFeatures.length > 0) {
-    const palmCenter = averageVector(calibration.palmFeatures);
-    const fistCenter = averageVector(calibration.fistFeatures);
-    const palmDist = vectorDistance(features, palmCenter);
-    const fistDist = vectorDistance(features, fistCenter);
-    const total = palmDist + fistDist;
-    if (total === 0) return { gesture: null, confidence: 0 };
-    if (palmDist < fistDist) return { gesture: "palm", confidence: fistDist / total };
-    return { gesture: "fist", confidence: palmDist / total };
-  }
-
-  // extensions[0]=thumb, [1]=index, [2]=middle, [3]=ring, [4]=pinky, [5]=openness
   const e = features;
   const thumb = e[0] ?? 0;
   const index = e[1] ?? 0;
@@ -76,35 +64,47 @@ function classifyGesture(
   const openness = e[5] ?? 0;
 
   const ext = (v: number) => v > 1.15;
-  const curl = (v: number) => v < 1.05;
+  const curl = (v: number) => v < 1.08;
 
-  // Palm: 4+ fingers clearly extended
-  if ([thumb, index, middle, ring, pinky].filter(ext).length >= 4 && openness > 1.2) {
-    const extCount = [thumb, index, middle, ring, pinky].filter(ext).length;
-    return { gesture: "palm", confidence: Math.min(0.98, 0.6 * (extCount / 5) + 0.38 * Math.min(openness / 2, 1)) };
-  }
-
-  // Fist: all 4 fingers curled (thumb excluded)
-  if (curl(index) && curl(middle) && curl(ring) && curl(pinky) && openness < 0.95) {
-    const curlCount = [index, middle, ring, pinky].filter(curl).length;
-    if (!ext(thumb)) {
-      return { gesture: "fist", confidence: Math.min(0.97, 0.6 * (curlCount / 4) + 0.37 * Math.min((1.5 - openness) / 1.5, 1)) };
-    }
-  }
-
-  // Thumbs Up: only thumb extended, four fingers curled
-  if (ext(thumb) && curl(index) && curl(middle) && curl(ring) && curl(pinky)) {
-    return { gesture: "thumbs_up", confidence: Math.min(0.95, 0.5 + (thumb - 1.15) * 0.8) };
-  }
-
-  // Peace: index + middle extended, ring + pinky curled
-  if (ext(index) && ext(middle) && curl(ring) && curl(pinky)) {
-    return { gesture: "peace", confidence: Math.min(0.93, 0.55 + ((index + middle) / 2 - 1.15) * 0.6) };
-  }
-
-  // Point: only index extended, others including middle curled
+  // Point: index clearly up, all other fingers curled.
+  // Checked first — not affected by calibration, high specificity.
   if (ext(index) && curl(middle) && curl(ring) && curl(pinky)) {
-    return { gesture: "point", confidence: Math.min(0.92, 0.5 + (index - 1.15) * 0.7) };
+    const conf = Math.min(0.93, 0.5 + (index - 1.15) * 0.75);
+    if (conf > 0.45) return { gesture: "point", confidence: conf };
+  }
+
+  // Thumbs Up: thumb clearly raised (threshold higher than ext to avoid fist overlap),
+  // all four fingers curled. Checked before calibration for same reason as point.
+  if (thumb > 1.22 && curl(index) && curl(middle) && curl(ring) && curl(pinky)) {
+    const conf = Math.min(0.95, 0.5 + (thumb - 1.22) * 0.9);
+    if (conf > 0.45) return { gesture: "thumbs_up", confidence: conf };
+  }
+
+  // Palm vs Fist: use calibration when available (better personal accuracy).
+  if (calibration && calibration.palmFeatures.length > 0 && calibration.fistFeatures.length > 0) {
+    const palmCenter = averageVector(calibration.palmFeatures);
+    const fistCenter = averageVector(calibration.fistFeatures);
+    const palmDist = vectorDistance(features, palmCenter);
+    const fistDist = vectorDistance(features, fistCenter);
+    const total = palmDist + fistDist;
+    if (total === 0) return { gesture: null, confidence: 0 };
+    const conf = Math.max(palmDist, fistDist) / total;
+    if (conf < 0.58) return { gesture: null, confidence: conf };
+    return palmDist < fistDist
+      ? { gesture: "palm", confidence: conf }
+      : { gesture: "fist", confidence: conf };
+  }
+
+  // Palm: 3+ non-thumb fingers extended, hand visibly open.
+  if ([index, middle, ring, pinky].filter(ext).length >= 3 && openness > 1.15) {
+    const extCount = [thumb, index, middle, ring, pinky].filter(ext).length;
+    return { gesture: "palm", confidence: Math.min(0.97, 0.55 * (extCount / 5) + 0.42 * Math.min(openness / 2, 1)) };
+  }
+
+  // Fist: all 4 non-thumb fingers curled, thumb not raised, hand closed.
+  if (curl(index) && curl(middle) && curl(ring) && curl(pinky) && openness < 1.0 && thumb < 1.22) {
+    const curlCount = [index, middle, ring, pinky].filter(curl).length;
+    return { gesture: "fist", confidence: Math.min(0.96, 0.55 * (curlCount / 4) + 0.41 * Math.min((1.5 - openness) / 1.5, 1)) };
   }
 
   return { gesture: null, confidence: 0 };

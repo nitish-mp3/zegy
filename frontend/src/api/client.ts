@@ -311,7 +311,7 @@ interface GestureEvent {
   actionNames?: string[];
 }
 
-export type CameraGestureType = "palm" | "fist" | "point" | "peace" | "thumbs_up";
+export type CameraGestureType = "palm" | "fist" | "point" | "thumbs_up";
 
 export interface CameraGestureDef {
   label: string;
@@ -320,11 +320,10 @@ export interface CameraGestureDef {
 }
 
 export const CAMERA_GESTURE_DEFS: Record<CameraGestureType, CameraGestureDef> = {
-  palm:      { label: "Open Palm",   description: "All 5 fingers fully extended",        emoji: "✋" },
-  fist:      { label: "Fist",        description: "All fingers curled into a closed fist", emoji: "✊" },
-  point:     { label: "Point",       description: "Index finger up, others curled",        emoji: "☝️" },
-  peace:     { label: "Peace / V",   description: "Index + middle fingers extended",       emoji: "✌️" },
-  thumbs_up: { label: "Thumbs Up",   description: "Thumb extended, fingers curled",        emoji: "👍" },
+  palm:      { label: "Open Palm",  description: "Hold hand open, all fingers spread wide",    emoji: "✋" },
+  fist:      { label: "Fist",       description: "Close all fingers tightly into a fist",       emoji: "✊" },
+  point:     { label: "Point",      description: "Index finger up, all other fingers curled",   emoji: "☝️" },
+  thumbs_up: { label: "Thumbs Up",  description: "Thumb raised, all other fingers curled",     emoji: "👍" },
 };
 
 export interface DiscoveredCamera {

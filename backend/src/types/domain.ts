@@ -143,7 +143,7 @@ export interface GestureEvent {
 
 // ── Camera Gesture Control ─────────────────────────────────
 
-export type CameraGestureType = "palm" | "fist" | "point" | "peace" | "thumbs_up";
+export type CameraGestureType = "palm" | "fist" | "point" | "thumbs_up";
 
 export interface CameraGestureBinding {
   id: string;
