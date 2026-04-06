@@ -140,3 +140,42 @@ export interface GestureEvent {
   confidence: number;
   actionNames?: string[];
 }
+
+// ── Camera Gesture Control ─────────────────────────────────
+
+export type CameraGestureType = "palm" | "fist";
+
+export interface CameraGestureBinding {
+  id: string;
+  gesture: CameraGestureType;
+  name: string;
+  holdTime: number;
+  cooldown: number;
+  actions: ActionStep[];
+  enabled: boolean;
+}
+
+export interface CameraCalibration {
+  palmFeatures: number[][];
+  fistFeatures: number[][];
+  calibratedAt: string;
+}
+
+export interface CameraConfig {
+  id: string;
+  name: string;
+  url: string;
+  snapshotUrl: string;
+  username: string;
+  password: string;
+  enabled: boolean;
+  groupId: string | null;
+  gestures: CameraGestureBinding[];
+  calibration: CameraCalibration | null;
+}
+
+export interface CameraGroup {
+  id: string;
+  name: string;
+  gestures: CameraGestureBinding[];
+}

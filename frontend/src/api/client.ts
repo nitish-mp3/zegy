@@ -177,7 +177,49 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ bindingId, correct }),
     }),
+
+  // Cameras
+  getCameras: () => request<CameraConfig[]>("/api/cameras"),
+  createCamera: (camera: { name: string; url: string; snapshotUrl?: string; username?: string; password?: string; groupId?: string | null }) =>
+    request<CameraConfig>("/api/cameras", { method: "POST", body: JSON.stringify(camera) }),
+  updateCamera: (id: string, data: Partial<CameraConfig>) =>
+    request<CameraConfig>(`/api/cameras/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteCamera: (id: string) =>
+    request<{ ok: boolean }>(`/api/cameras/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  calibrateCamera: (id: string, palmFeatures: number[][], fistFeatures: number[][]) =>
+    request<{ ok: boolean; calibration: CameraCalibration }>(`/api/cameras/${encodeURIComponent(id)}/calibrate`, {
+      method: "POST",
+      body: JSON.stringify({ palmFeatures, fistFeatures }),
+    }),
+  triggerCameraGesture: (id: string, gesture: CameraGestureType) =>
+    request<{ triggered: boolean; gesture: string; bindingsMatched?: number }>(`/api/cameras/${encodeURIComponent(id)}/trigger`, {
+      method: "POST",
+      body: JSON.stringify({ gesture }),
+    }),
+  getCameraStreamUrl: (id: string) => `${BASE}/api/cameras/${encodeURIComponent(id)}/stream`,
+  getCameraSnapshotUrl: (id: string) => `${BASE}/api/cameras/${encodeURIComponent(id)}/snapshot`,
+
+  // Camera Groups
+  getCameraGroups: () => request<CameraGroup[]>("/api/camera-groups"),
+  createCameraGroup: (group: { name: string; gestures?: CameraGestureBinding[] }) =>
+    request<CameraGroup>("/api/camera-groups", { method: "POST", body: JSON.stringify(group) }),
+  updateCameraGroup: (id: string, data: Partial<CameraGroup>) =>
+    request<CameraGroup>(`/api/camera-groups/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteCameraGroup: (id: string) =>
+    request<{ ok: boolean }>(`/api/camera-groups/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 };
+
+export { BASE };
 
 // Types used by the API
 interface ActionStep {
@@ -262,4 +304,42 @@ interface GestureEvent {
   targetId: number;
   confidence: number;
   actionNames?: string[];
+}
+
+export type CameraGestureType = "palm" | "fist";
+
+export interface CameraGestureBinding {
+  id: string;
+  gesture: CameraGestureType;
+  name: string;
+  holdTime: number;
+  cooldown: number;
+  actions: GestureAction[];
+  enabled: boolean;
+}
+
+export interface CameraCalibration {
+  palmFeatures: number[][];
+  fistFeatures: number[][];
+  calibratedAt: string;
+}
+
+export interface CameraConfig {
+  id: string;
+  name: string;
+  url: string;
+  snapshotUrl: string;
+  username: string;
+  password: string;
+  passwordSet: boolean;
+  enabled: boolean;
+  groupId: string | null;
+  gestures: CameraGestureBinding[];
+  calibration: CameraCalibration | null;
+}
+
+export interface CameraGroup {
+  id: string;
+  name: string;
+  gestures: CameraGestureBinding[];
 }

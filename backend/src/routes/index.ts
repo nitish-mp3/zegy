@@ -7,3 +7,4 @@ export { zoneRoutes } from "./zones";
 export { nodeRoutes } from "./nodes";
 export { settingsRoutes } from "./settings";
 export { gestureRoutes } from "./gestures";
+export { cameraRoutes } from "./cameras";

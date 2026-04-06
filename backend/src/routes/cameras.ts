@@ -1,0 +1,368 @@
+import type { FastifyInstance } from "fastify";
+import { Readable } from "node:stream";
+import { loadJson, saveJson } from "../store";
+import { callService } from "../ha/client";
+import { logger } from "../logger";
+import type {
+  CameraConfig,
+  CameraGroup,
+  CameraGestureBinding,
+  CameraCalibration,
+  CameraGestureType,
+  ActionStep,
+} from "../types";
+
+const CAMERAS_FILE = "cameras.json";
+const CAMERA_GROUPS_FILE = "camera-groups.json";
+
+export function loadCameras(): CameraConfig[] {
+  const raw = loadJson<CameraConfig[]>(CAMERAS_FILE, []);
+  return raw.map((c) => ({
+    ...c,
+    gestures: Array.isArray(c.gestures) ? c.gestures : [],
+    calibration: c.calibration ?? null,
+    groupId: c.groupId ?? null,
+    snapshotUrl: c.snapshotUrl ?? "",
+    username: c.username ?? "",
+    password: c.password ?? "",
+  }));
+}
+
+function saveCameras(cameras: CameraConfig[]): void {
+  saveJson(CAMERAS_FILE, cameras);
+}
+
+function loadGroups(): CameraGroup[] {
+  return loadJson<CameraGroup[]>(CAMERA_GROUPS_FILE, []);
+}
+
+function saveGroups(groups: CameraGroup[]): void {
+  saveJson(CAMERA_GROUPS_FILE, groups);
+}
+
+function genId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function validateActions(arr: unknown): ActionStep[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(
+      (a: Record<string, unknown>) =>
+        typeof a.entityId === "string" && typeof a.service === "string",
+    )
+    .map((a: Record<string, unknown>) => ({
+      id: typeof a.id === "string" ? a.id : genId("as"),
+      entityId: a.entityId as string,
+      service: a.service as string,
+      data: typeof a.data === "object" && a.data !== null ? (a.data as Record<string, unknown>) : undefined,
+      delay: typeof a.delay === "number" ? Math.max(0, a.delay) : 0,
+    }));
+}
+
+function validateGestureBinding(raw: unknown): CameraGestureBinding | null {
+  const b = raw as Record<string, unknown>;
+  const gesture = b.gesture as string;
+  if (gesture !== "palm" && gesture !== "fist") return null;
+  return {
+    id: typeof b.id === "string" ? b.id : genId("cgb"),
+    gesture: gesture as CameraGestureType,
+    name: typeof b.name === "string" ? b.name : gesture,
+    holdTime: typeof b.holdTime === "number" ? Math.max(200, b.holdTime) : 800,
+    cooldown: typeof b.cooldown === "number" ? Math.max(500, b.cooldown) : 3000,
+    actions: validateActions(b.actions),
+    enabled: typeof b.enabled === "boolean" ? b.enabled : true,
+  };
+}
+
+function buildAuthHeaders(cam: CameraConfig): Record<string, string> {
+  if (!cam.username) return {};
+  return {
+    Authorization: `Basic ${Buffer.from(`${cam.username}:${cam.password}`).toString("base64")}`,
+  };
+}
+
+async function executeGestureActions(actions: ActionStep[]): Promise<void> {
+  for (const action of actions) {
+    if (action.delay > 0) {
+      await new Promise<void>((r) => setTimeout(r, action.delay));
+    }
+    try {
+      const domain = action.entityId.split(".")[0];
+      await callService(domain, action.service, {
+        entity_id: action.entityId,
+        ...action.data,
+      });
+      logger.info({ entityId: action.entityId, service: action.service }, "Camera gesture action executed");
+    } catch (err) {
+      logger.error({ err, entityId: action.entityId }, "Failed to execute camera gesture action");
+    }
+  }
+}
+
+export async function cameraRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/api/cameras", async (_req, reply) => {
+    const cameras = loadCameras();
+    const safe = cameras.map((c) => ({
+      ...c,
+      password: "",
+      passwordSet: !!c.password,
+    }));
+    return reply.send(safe);
+  });
+
+  app.post("/api/cameras", async (req, reply) => {
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const url = typeof body.url === "string" ? body.url.trim() : "";
+    if (!name || !url) {
+      return reply.status(400).send({ error: "Name and URL are required" });
+    }
+
+    const camera: CameraConfig = {
+      id: genId("cam"),
+      name,
+      url,
+      snapshotUrl: typeof body.snapshotUrl === "string" ? body.snapshotUrl.trim() : "",
+      username: typeof body.username === "string" ? body.username : "",
+      password: typeof body.password === "string" ? body.password : "",
+      enabled: typeof body.enabled === "boolean" ? body.enabled : true,
+      groupId: typeof body.groupId === "string" ? body.groupId : null,
+      gestures: [],
+      calibration: null,
+    };
+
+    const cameras = loadCameras();
+    cameras.push(camera);
+    saveCameras(cameras);
+    return reply.status(201).send({ ...camera, password: "", passwordSet: !!camera.password });
+  });
+
+  app.put<{ Params: { id: string } }>("/api/cameras/:id", async (req, reply) => {
+    const cameras = loadCameras();
+    const idx = cameras.findIndex((c) => c.id === req.params.id);
+    if (idx === -1) return reply.status(404).send({ error: "Camera not found" });
+
+    const body = req.body as Record<string, unknown>;
+    const cam = cameras[idx];
+
+    if (typeof body.name === "string") cam.name = body.name.trim();
+    if (typeof body.url === "string") cam.url = body.url.trim();
+    if (typeof body.snapshotUrl === "string") cam.snapshotUrl = body.snapshotUrl.trim();
+    if (typeof body.username === "string") cam.username = body.username;
+    if (typeof body.password === "string" && body.password !== "") cam.password = body.password;
+    if (typeof body.enabled === "boolean") cam.enabled = body.enabled;
+    if (typeof body.groupId === "string" || body.groupId === null) cam.groupId = body.groupId as string | null;
+
+    if (Array.isArray(body.gestures)) {
+      cam.gestures = (body.gestures as unknown[])
+        .map(validateGestureBinding)
+        .filter((g): g is CameraGestureBinding => g !== null);
+    }
+
+    cameras[idx] = cam;
+    saveCameras(cameras);
+    return reply.send({ ...cam, password: "", passwordSet: !!cam.password });
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/cameras/:id", async (req, reply) => {
+    const cameras = loadCameras();
+    const filtered = cameras.filter((c) => c.id !== req.params.id);
+    if (filtered.length === cameras.length) {
+      return reply.status(404).send({ error: "Camera not found" });
+    }
+    saveCameras(filtered);
+    return reply.send({ ok: true });
+  });
+
+  app.post<{ Params: { id: string } }>("/api/cameras/:id/calibrate", async (req, reply) => {
+    const cameras = loadCameras();
+    const idx = cameras.findIndex((c) => c.id === req.params.id);
+    if (idx === -1) return reply.status(404).send({ error: "Camera not found" });
+
+    const body = req.body as Record<string, unknown>;
+    const palmFeatures = body.palmFeatures as number[][];
+    const fistFeatures = body.fistFeatures as number[][];
+
+    if (!Array.isArray(palmFeatures) || !Array.isArray(fistFeatures)) {
+      return reply.status(400).send({ error: "palmFeatures and fistFeatures arrays required" });
+    }
+
+    const calibration: CameraCalibration = {
+      palmFeatures,
+      fistFeatures,
+      calibratedAt: new Date().toISOString(),
+    };
+
+    cameras[idx].calibration = calibration;
+    saveCameras(cameras);
+    return reply.send({ ok: true, calibration });
+  });
+
+  app.post<{ Params: { id: string } }>("/api/cameras/:id/trigger", async (req, reply) => {
+    const body = req.body as Record<string, unknown>;
+    const gesture = body.gesture as string;
+    if (gesture !== "palm" && gesture !== "fist") {
+      return reply.status(400).send({ error: "Invalid gesture type" });
+    }
+
+    const cameras = loadCameras();
+    const camera = cameras.find((c) => c.id === req.params.id);
+    if (!camera) return reply.status(404).send({ error: "Camera not found" });
+
+    const matchingBindings: CameraGestureBinding[] = [];
+
+    for (const g of camera.gestures) {
+      if (g.enabled && g.gesture === gesture) matchingBindings.push(g);
+    }
+
+    if (camera.groupId) {
+      const groups = loadGroups();
+      const group = groups.find((g) => g.id === camera.groupId);
+      if (group) {
+        for (const g of group.gestures) {
+          if (g.enabled && g.gesture === gesture) matchingBindings.push(g);
+        }
+      }
+    }
+
+    if (matchingBindings.length === 0) {
+      return reply.send({ triggered: false, reason: "No matching bindings" });
+    }
+
+    const allActions = matchingBindings.flatMap((b) => b.actions);
+    if (allActions.length > 0) {
+      executeGestureActions(allActions).catch(() => {});
+    }
+
+    logger.info({ cameraId: camera.id, gesture, bindings: matchingBindings.length }, "Camera gesture triggered");
+    return reply.send({ triggered: true, gesture, bindingsMatched: matchingBindings.length });
+  });
+
+  app.get<{ Params: { id: string } }>("/api/cameras/:id/snapshot", async (req, reply) => {
+    const cameras = loadCameras();
+    const camera = cameras.find((c) => c.id === req.params.id);
+    if (!camera) return reply.status(404).send({ error: "Camera not found" });
+
+    const targetUrl = camera.snapshotUrl || camera.url;
+    if (!targetUrl) return reply.status(400).send({ error: "No URL configured" });
+
+    try {
+      const response = await fetch(targetUrl, {
+        headers: buildAuthHeaders(camera),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok || !response.body) {
+        return reply.status(502).send({ error: "Camera unavailable" });
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      return reply
+        .type(response.headers.get("content-type") || "image/jpeg")
+        .send(buffer);
+    } catch (err) {
+      logger.debug({ err, cameraId: camera.id }, "Camera snapshot failed");
+      return reply.status(502).send({ error: "Camera unavailable" });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>("/api/cameras/:id/stream", async (req, reply) => {
+    const cameras = loadCameras();
+    const camera = cameras.find((c) => c.id === req.params.id);
+    if (!camera) return reply.status(404).send({ error: "Camera not found" });
+
+    if (!camera.url) return reply.status(400).send({ error: "No URL configured" });
+
+    try {
+      const upstream = await fetch(camera.url, {
+        headers: buildAuthHeaders(camera),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!upstream.ok || !upstream.body) {
+        return reply.status(502).send({ error: "Camera stream unavailable" });
+      }
+
+      const contentType = upstream.headers.get("content-type") || "multipart/x-mixed-replace; boundary=frame";
+
+      reply.raw.writeHead(200, {
+        "Content-Type": contentType,
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Connection": "close",
+        "Pragma": "no-cache",
+      });
+
+      const readable = Readable.fromWeb(upstream.body as never);
+      readable.pipe(reply.raw);
+
+      req.raw.on("close", () => {
+        readable.destroy();
+      });
+    } catch (err) {
+      logger.debug({ err, cameraId: camera.id }, "Camera stream failed");
+      return reply.status(502).send({ error: "Camera stream unavailable" });
+    }
+  });
+
+  app.get("/api/camera-groups", async (_req, reply) => {
+    return reply.send(loadGroups());
+  });
+
+  app.post("/api/camera-groups", async (req, reply) => {
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return reply.status(400).send({ error: "Name is required" });
+
+    const group: CameraGroup = {
+      id: genId("cg"),
+      name,
+      gestures: Array.isArray(body.gestures)
+        ? (body.gestures as unknown[]).map(validateGestureBinding).filter((g): g is CameraGestureBinding => g !== null)
+        : [],
+    };
+
+    const groups = loadGroups();
+    groups.push(group);
+    saveGroups(groups);
+    return reply.status(201).send(group);
+  });
+
+  app.put<{ Params: { id: string } }>("/api/camera-groups/:id", async (req, reply) => {
+    const groups = loadGroups();
+    const idx = groups.findIndex((g) => g.id === req.params.id);
+    if (idx === -1) return reply.status(404).send({ error: "Group not found" });
+
+    const body = req.body as Record<string, unknown>;
+    if (typeof body.name === "string") groups[idx].name = body.name.trim();
+    if (Array.isArray(body.gestures)) {
+      groups[idx].gestures = (body.gestures as unknown[])
+        .map(validateGestureBinding)
+        .filter((g): g is CameraGestureBinding => g !== null);
+    }
+
+    saveGroups(groups);
+    return reply.send(groups[idx]);
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/camera-groups/:id", async (req, reply) => {
+    const groups = loadGroups();
+    const filtered = groups.filter((g) => g.id !== req.params.id);
+    if (filtered.length === groups.length) {
+      return reply.status(404).send({ error: "Group not found" });
+    }
+    saveGroups(filtered);
+
+    const cameras = loadCameras();
+    let changed = false;
+    for (const cam of cameras) {
+      if (cam.groupId === req.params.id) {
+        cam.groupId = null;
+        changed = true;
+      }
+    }
+    if (changed) saveCameras(cameras);
+
+    return reply.send({ ok: true });
+  });
+}
