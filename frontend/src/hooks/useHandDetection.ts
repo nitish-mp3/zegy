@@ -62,25 +62,49 @@ function classifyGesture(
     const fistDist = vectorDistance(features, fistCenter);
     const total = palmDist + fistDist;
     if (total === 0) return { gesture: null, confidence: 0 };
-
-    if (palmDist < fistDist) {
-      return { gesture: "palm", confidence: fistDist / total };
-    }
+    if (palmDist < fistDist) return { gesture: "palm", confidence: fistDist / total };
     return { gesture: "fist", confidence: palmDist / total };
   }
 
-  const extensions = features.slice(0, 5);
-  const openness = features[5] ?? 0;
-  const extendedCount = extensions.filter((e) => e > 1.15).length;
+  // extensions[0]=thumb, [1]=index, [2]=middle, [3]=ring, [4]=pinky, [5]=openness
+  const e = features;
+  const thumb = e[0] ?? 0;
+  const index = e[1] ?? 0;
+  const middle = e[2] ?? 0;
+  const ring = e[3] ?? 0;
+  const pinky = e[4] ?? 0;
+  const openness = e[5] ?? 0;
 
-  if (extendedCount >= 4 && openness > 1.2) {
-    const conf = Math.min(1, (extendedCount / 5) * 0.6 + Math.min(openness / 2, 0.4));
-    return { gesture: "palm", confidence: conf };
+  const ext = (v: number) => v > 1.15;
+  const curl = (v: number) => v < 1.05;
+
+  // Palm: 4+ fingers clearly extended
+  if ([thumb, index, middle, ring, pinky].filter(ext).length >= 4 && openness > 1.2) {
+    const extCount = [thumb, index, middle, ring, pinky].filter(ext).length;
+    return { gesture: "palm", confidence: Math.min(0.98, 0.6 * (extCount / 5) + 0.38 * Math.min(openness / 2, 1)) };
   }
 
-  if (extendedCount <= 1 && openness < 0.9) {
-    const conf = Math.min(1, ((5 - extendedCount) / 5) * 0.6 + Math.min((1.5 - openness) / 1.5, 0.4));
-    return { gesture: "fist", confidence: conf };
+  // Fist: all 4 fingers curled (thumb excluded)
+  if (curl(index) && curl(middle) && curl(ring) && curl(pinky) && openness < 0.95) {
+    const curlCount = [index, middle, ring, pinky].filter(curl).length;
+    if (!ext(thumb)) {
+      return { gesture: "fist", confidence: Math.min(0.97, 0.6 * (curlCount / 4) + 0.37 * Math.min((1.5 - openness) / 1.5, 1)) };
+    }
+  }
+
+  // Thumbs Up: only thumb extended, four fingers curled
+  if (ext(thumb) && curl(index) && curl(middle) && curl(ring) && curl(pinky)) {
+    return { gesture: "thumbs_up", confidence: Math.min(0.95, 0.5 + (thumb - 1.15) * 0.8) };
+  }
+
+  // Peace: index + middle extended, ring + pinky curled
+  if (ext(index) && ext(middle) && curl(ring) && curl(pinky)) {
+    return { gesture: "peace", confidence: Math.min(0.93, 0.55 + ((index + middle) / 2 - 1.15) * 0.6) };
+  }
+
+  // Point: only index extended, others including middle curled
+  if (ext(index) && curl(middle) && curl(ring) && curl(pinky)) {
+    return { gesture: "point", confidence: Math.min(0.92, 0.5 + (index - 1.15) * 0.7) };
   }
 
   return { gesture: null, confidence: 0 };

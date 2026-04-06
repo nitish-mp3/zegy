@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
+import os from "node:os";
 import { loadJson, saveJson } from "../store";
 import { callService } from "../ha/client";
 import { logger } from "../logger";
@@ -9,6 +10,7 @@ import type {
   CameraGestureBinding,
   CameraCalibration,
   CameraGestureType,
+  DiscoveredCamera,
   ActionStep,
 } from "../types";
 
@@ -60,10 +62,12 @@ function validateActions(arr: unknown): ActionStep[] {
     }));
 }
 
+const VALID_GESTURE_TYPES: CameraGestureType[] = ["palm", "fist", "point", "peace", "thumbs_up"];
+
 function validateGestureBinding(raw: unknown): CameraGestureBinding | null {
   const b = raw as Record<string, unknown>;
   const gesture = b.gesture as string;
-  if (gesture !== "palm" && gesture !== "fist") return null;
+  if (!VALID_GESTURE_TYPES.includes(gesture as CameraGestureType)) return null;
   return {
     id: typeof b.id === "string" ? b.id : genId("cgb"),
     gesture: gesture as CameraGestureType,
@@ -202,7 +206,7 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string } }>("/api/cameras/:id/trigger", async (req, reply) => {
     const body = req.body as Record<string, unknown>;
     const gesture = body.gesture as string;
-    if (gesture !== "palm" && gesture !== "fist") {
+    if (!VALID_GESTURE_TYPES.includes(gesture as CameraGestureType)) {
       return reply.status(400).send({ error: "Invalid gesture type" });
     }
 
@@ -365,4 +369,184 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({ ok: true });
   });
+
+  app.get("/api/cameras/discover", async (req, reply) => {
+    const query = req.query as Record<string, string>;
+    const subnets = query.subnet
+      ? [query.subnet]
+      : getLocalSubnets();
+
+    if (subnets.length === 0) {
+      return reply.send({ found: [], subnets: [] });
+    }
+
+    const found: DiscoveredCamera[] = [];
+    for (const subnet of subnets) {
+      const results = await scanSubnet(subnet);
+      found.push(...results);
+    }
+
+    return reply.send({ found, subnets });
+  });
+}
+
+function getLocalSubnets(): string[] {
+  const subnets: string[] = [];
+  const interfaces = os.networkInterfaces();
+  for (const name in interfaces) {
+    for (const iface of interfaces[name] ?? []) {
+      if (iface.family !== "IPv4" || iface.internal) continue;
+      const parts = iface.address.split(".");
+      const first = parseInt(parts[0]);
+      const second = parseInt(parts[1]);
+      const isPrivate =
+        first === 10 ||
+        (first === 172 && second >= 16 && second <= 31) ||
+        (first === 192 && second === 168);
+      if (isPrivate) {
+        subnets.push(`${parts[0]}.${parts[1]}.${parts[2]}`);
+      }
+    }
+  }
+  return [...new Set(subnets)];
+}
+
+const CAMERA_BRANDS: [RegExp, string][] = [
+  [/axis/i,       "Axis"],
+  [/hikvision/i,  "Hikvision"],
+  [/dahua/i,      "Dahua"],
+  [/amcrest/i,    "Amcrest"],
+  [/reolink/i,    "Reolink"],
+  [/foscam/i,     "Foscam"],
+  [/hanwha|samsung/i, "Hanwha"],
+  [/vivotek/i,    "Vivotek"],
+  [/uniview/i,    "Uniview"],
+  [/ipcam/i,      "IP Camera"],
+];
+
+const CAMERA_PATHS: Record<number, { stream: string; snapshot: string }> = {
+  80:   { stream: "/video",       snapshot: "/snapshot.jpg" },
+  8080: { stream: "/video",       snapshot: "/snapshot.jpg" },
+  8081: { stream: "/video",       snapshot: "/snapshot.jpg" },
+  554:  { stream: "/",            snapshot: "/" },
+};
+
+const SNAPSHOT_CANDIDATES = [
+  "/snapshot.jpg", "/snapshot", "/cgi-bin/snapshot.cgi",
+  "/image.jpg", "/still.jpg", "/frame.jpg",
+];
+
+const STREAM_CANDIDATES = [
+  "/video", "/mjpeg", "/stream", "/live",
+  "/cgi-bin/mjpeg", "/videostream.cgi", "/mjpeg.cgi",
+  "/axis-cgi/mjpeg.cgi", "/nphMotionJpeg",
+];
+
+async function probeCameraHost(ip: string, port: number): Promise<DiscoveredCamera | null> {
+  const base = `http://${ip}:${port}`;
+  let serverHeader = "";
+  let requiresAuth = false;
+  let isCamera = false;
+  let streamUrl = "";
+  let snapshotUrl = "";
+
+  try {
+    const res = await fetch(`${base}/`, {
+      signal: AbortSignal.timeout(1500),
+      method: "GET",
+    });
+
+    serverHeader = res.headers.get("server") ?? "";
+    requiresAuth = res.status === 401 || res.status === 403 || !!res.headers.get("www-authenticate");
+    const ct = res.headers.get("content-type") ?? "";
+
+    if (ct.includes("multipart") || ct.includes("video")) {
+      isCamera = true;
+      streamUrl = `${base}/`;
+    } else if (requiresAuth) {
+      isCamera = true;
+    }
+
+    for (const sc of STREAM_CANDIDATES) {
+      if (isCamera) break;
+      try {
+        const sr = await fetch(`${base}${sc}`, {
+          signal: AbortSignal.timeout(800),
+          method: "HEAD",
+        });
+        const sct = sr.headers.get("content-type") ?? "";
+        if (sct.includes("multipart") || sct.includes("video") || sr.status === 401) {
+          isCamera = true;
+          streamUrl = `${base}${sc}`;
+        }
+      } catch {
+        // skip
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  if (!serverHeader && !requiresAuth && !isCamera) return null;
+
+  const bools = CAMERA_BRANDS.find(([pattern]) => pattern.test(serverHeader));
+  const brand = bools ? bools[1] : (serverHeader ? serverHeader.split("/")[0].trim() : null);
+
+  const isKnownBrand = !!bools;
+  if (!isCamera && !isKnownBrand && !requiresAuth) return null;
+
+  if (!streamUrl) {
+    streamUrl = `${base}${CAMERA_PATHS[port]?.stream ?? "/video"}`;
+  }
+
+  for (const sc of SNAPSHOT_CANDIDATES) {
+    try {
+      const sr = await fetch(`${base}${sc}`, {
+        signal: AbortSignal.timeout(800),
+        method: "HEAD",
+      });
+      const sct = sr.headers.get("content-type") ?? "";
+      if (sct.includes("image") || sr.status === 401) {
+        snapshotUrl = `${base}${sc}`;
+        break;
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  if (!snapshotUrl) {
+    snapshotUrl = `${base}${CAMERA_PATHS[port]?.snapshot ?? "/snapshot.jpg"}`;
+  }
+
+  const name = brand ? `${brand} @ ${ip}` : `Camera @ ${ip}`;
+  const confidence: "confirmed" | "likely" =
+    isCamera || isKnownBrand ? "confirmed" : "likely";
+
+  logger.debug({ ip, port, brand }, "Discovered camera");
+
+  return { ip, port, name, streamUrl, snapshotUrl, brand: brand ?? null, confidence, requiresAuth };
+}
+
+async function scanSubnet(subnet: string): Promise<DiscoveredCamera[]> {
+  const BATCH = 40;
+  const PORTS = [80, 8080, 8081];
+  const found: DiscoveredCamera[] = [];
+
+  const tasks: Array<() => Promise<void>> = [];
+  for (let i = 1; i <= 254; i++) {
+    for (const port of PORTS) {
+      const ip = `${subnet}.${i}`;
+      tasks.push(async () => {
+        const result = await probeCameraHost(ip, port);
+        if (result) found.push(result);
+      });
+    }
+  }
+
+  for (let i = 0; i < tasks.length; i += BATCH) {
+    await Promise.allSettled(tasks.slice(i, i + BATCH).map((t) => t()));
+  }
+
+  return found;
 }

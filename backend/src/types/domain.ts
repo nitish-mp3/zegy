@@ -143,7 +143,7 @@ export interface GestureEvent {
 
 // ── Camera Gesture Control ─────────────────────────────────
 
-export type CameraGestureType = "palm" | "fist";
+export type CameraGestureType = "palm" | "fist" | "point" | "peace" | "thumbs_up";
 
 export interface CameraGestureBinding {
   id: string;
@@ -178,4 +178,15 @@ export interface CameraGroup {
   id: string;
   name: string;
   gestures: CameraGestureBinding[];
+}
+
+export interface DiscoveredCamera {
+  ip: string;
+  port: number;
+  name: string;
+  streamUrl: string;
+  snapshotUrl: string;
+  brand: string | null;
+  confidence: "confirmed" | "likely";
+  requiresAuth: boolean;
 }

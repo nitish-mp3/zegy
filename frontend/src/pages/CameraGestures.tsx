@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useCameras } from "../hooks/useCameras";
 import { useHandDetection } from "../hooks/useHandDetection";
-import { api } from "../api/client";
+import { api, CAMERA_GESTURE_DEFS } from "../api/client";
 import type {
   CameraConfig,
   CameraGroup,
   CameraGestureBinding,
   CameraGestureType,
   CameraCalibration,
+  DiscoveredCamera,
 } from "../api/client";
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -72,19 +73,8 @@ function Select({
 }
 
 function GestureIcon({ gesture, size = 24 }: { gesture: CameraGestureType; size?: number }) {
-  if (gesture === "palm") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M10.05 4.575a1.575 1.575 0 10-3.15 0v3.15M10.05 4.575a1.575 1.575 0 113.15 0v3.15M10.05 4.575V7.725m3.15-3.15a1.575 1.575 0 113.15 0v3.15m-3.15-3.15V7.725m3.15-3.15v2.576a3.159 3.159 0 01.895-.045c.858.107 1.543.85 1.555 1.715v4.43a6 6 0 01-6 6h-1.5a6 6 0 01-6-6V9.15a1.575 1.575 0 013.15 0v1.575M6.9 7.725V4.575a1.575 1.575 0 10-3.15 0v6.3" />
-      </svg>
-    );
-  }
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-      <circle cx="12" cy="12" r="9" />
-    </svg>
-  );
+  const style: React.CSSProperties = { fontSize: size * 0.85, lineHeight: 1, display: "inline-block" };
+  return <span style={style} role="img">{CAMERA_GESTURE_DEFS[gesture].emoji}</span>;
 }
 
 function AddCameraModal({
@@ -98,69 +88,248 @@ function AddCameraModal({
   onClose: () => void;
   onSave: (data: { name: string; url: string; snapshotUrl: string; username: string; password: string; groupId: string | null }) => void;
 }) {
+  const [tab, setTab] = useState<"manual" | "discover">("discover");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [snapshotUrl, setSnapshotUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [groupId, setGroupId] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredCamera[]>([]);
+  const [scanDone, setScanDone] = useState(false);
+  const [scanSubnets, setScanSubnets] = useState<string[]>([]);
+  const [selectedDiscovered, setSelectedDiscovered] = useState<string | null>(null);
 
   if (!open) return null;
 
   const handleSave = () => {
     if (!name.trim() || !url.trim()) return;
     onSave({ name: name.trim(), url: url.trim(), snapshotUrl: snapshotUrl.trim(), username, password, groupId: groupId || null });
-    setName("");
-    setUrl("");
-    setSnapshotUrl("");
-    setUsername("");
-    setPassword("");
-    setGroupId("");
+    resetForm();
   };
 
+  const resetForm = () => {
+    setName(""); setUrl(""); setSnapshotUrl(""); setUsername(""); setPassword(""); setGroupId("");
+    setDiscovered([]); setScanDone(false); setSelectedDiscovered(null);
+  };
+
+  const handleClose = () => { resetForm(); onClose(); };
+
+  const runScan = async () => {
+    setScanning(true);
+    setScanDone(false);
+    setDiscovered([]);
+    try {
+      const res = await api.discoverCameras();
+      setDiscovered(res.found);
+      setScanSubnets(res.subnets);
+    } catch {
+      // ignore
+    } finally {
+      setScanning(false);
+      setScanDone(true);
+    }
+  };
+
+  const selectDiscovered = (cam: DiscoveredCamera) => {
+    setSelectedDiscovered(cam.ip + ":" + cam.port);
+    setName(cam.name);
+    setUrl(cam.streamUrl);
+    setSnapshotUrl(cam.snapshotUrl);
+    setTab("manual");
+  };
+
+  const canSave = name.trim() && url.trim();
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-surface-raised rounded-2xl p-6 shadow-2xl">
-        <h3 className="section-title mb-4">Add Camera</h3>
-        <div className="space-y-3">
-          <div>
-            <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Living Room Camera" />
-          </div>
-          <div>
-            <Label>Stream URL (MJPEG)</Label>
-            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.100/mjpeg" />
-          </div>
-          <div>
-            <Label>Snapshot URL (optional)</Label>
-            <Input value={snapshotUrl} onChange={(e) => setSnapshotUrl(e.target.value)} placeholder="http://192.168.1.100/snapshot" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
+      <div className="relative w-full max-w-lg bg-surface-raised rounded-2xl shadow-2xl overflow-hidden">
+
+        <div className="flex border-b border-white/[0.06]">
+          <button
+            onClick={() => setTab("discover")}
+            className={`flex-1 px-4 py-3.5 text-sm font-medium transition-colors ${tab === "discover" ? "text-zegy-400 border-b-2 border-zegy-500" : "text-gray-500 hover:text-gray-300"}`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              Auto Discover
+            </span>
+          </button>
+          <button
+            onClick={() => setTab("manual")}
+            className={`flex-1 px-4 py-3.5 text-sm font-medium transition-colors ${tab === "manual" ? "text-zegy-400 border-b-2 border-zegy-500" : "text-gray-500 hover:text-gray-300"}`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+              </svg>
+              Manual Entry
+            </span>
+          </button>
+        </div>
+
+        <div className="p-6">
+          {tab === "discover" && (
             <div>
-              <Label>Username</Label>
-              <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" />
+              {!scanDone && !scanning && (
+                <div className="text-center py-6">
+                  <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-zegy-600/15 mb-4">
+                    <svg className="h-7 w-7 text-zegy-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm text-gray-300 font-medium mb-1">Scan your local network</p>
+                  <p className="text-xs text-gray-500 mb-5">Automatically finds IP cameras on your LAN. Scans ports 80 and 8080 across your /24 subnet.</p>
+                  <Btn onClick={runScan}>
+                    <span className="flex items-center gap-2">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                      </svg>
+                      Scan Network
+                    </span>
+                  </Btn>
+                </div>
+              )}
+
+              {scanning && (
+                <div className="text-center py-8">
+                  <div className="relative inline-flex justify-center items-center w-14 h-14 mb-4">
+                    <div className="absolute inset-0 border-2 border-zegy-500/30 rounded-full" />
+                    <div className="absolute inset-0 border-2 border-zegy-500 border-t-transparent rounded-full animate-spin" />
+                    <svg className="h-6 w-6 text-zegy-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm text-gray-300 font-medium">Scanning network...</p>
+                  <p className="text-xs text-gray-500 mt-1">Checking ports 80 and 8080 on all local hosts. This takes ~15 seconds.</p>
+                </div>
+              )}
+
+              {scanDone && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <span className="text-sm font-medium text-gray-200">
+                        {discovered.length === 0 ? "No cameras found" : `${discovered.length} camera${discovered.length !== 1 ? "s" : ""} found`}
+                      </span>
+                      {scanSubnets.length > 0 && (
+                        <p className="text-xs text-gray-600 mt-0.5">Scanned: {scanSubnets.map(s => s + ".0/24").join(", ")}</p>
+                      )}
+                    </div>
+                    <button onClick={runScan} className="text-xs text-zegy-400 hover:text-zegy-300 flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                      </svg>
+                      Rescan
+                    </button>
+                  </div>
+
+                  {discovered.length === 0 ? (
+                    <div className="bg-surface-overlay rounded-xl p-5 text-center">
+                      <p className="text-xs text-gray-500">No cameras detected automatically. Try adding manually or check that your cameras are on the same network.</p>
+                      <button onClick={() => setTab("manual")} className="mt-3 text-xs text-zegy-400 hover:text-zegy-300">
+                        Add camera manually →
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {discovered.map((cam) => {
+                        const key = cam.ip + ":" + cam.port;
+                        const isSelected = selectedDiscovered === key;
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => selectDiscovered(cam)}
+                            className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${isSelected ? "bg-zegy-600/20 ring-1 ring-zegy-500/40" : "bg-surface-overlay hover:bg-white/[0.05]"}`}
+                          >
+                            <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${cam.confidence === "confirmed" ? "bg-green-600/20" : "bg-yellow-600/20"}`}>
+                              <svg className={`h-4 w-4 ${cam.confidence === "confirmed" ? "text-green-400" : "text-yellow-400"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-gray-200 truncate">{cam.name}</span>
+                                {cam.requiresAuth && (
+                                  <span className="badge bg-yellow-600/20 text-yellow-400 text-[10px]">Auth</span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 truncate mt-0.5">{cam.streamUrl}</p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <span className={`badge text-[10px] ${cam.confidence === "confirmed" ? "bg-green-600/20 text-green-400" : "bg-yellow-600/20 text-yellow-400"}`}>
+                                {cam.confidence}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <div>
-              <Label>Password</Label>
-              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </div>
-          </div>
-          {groups.length > 0 && (
-            <div>
-              <Label>Group</Label>
-              <Select value={groupId} onChange={setGroupId}>
-                <option value="">No group</option>
-                {groups.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </Select>
+          )}
+
+          {tab === "manual" && (
+            <div className="space-y-3">
+              {selectedDiscovered && (
+                <div className="flex items-center gap-2 bg-green-600/10 border border-green-600/20 rounded-xl px-3 py-2.5 mb-1">
+                  <svg className="h-4 w-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  <span className="text-xs text-green-300">Pre-filled from discovered camera. Review and confirm details.</span>
+                </div>
+              )}
+              <div>
+                <Label>Name</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Living Room Camera" />
+              </div>
+              <div>
+                <Label>Stream URL</Label>
+                <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.100/video" />
+              </div>
+              <div>
+                <Label>Snapshot URL (optional)</Label>
+                <Input value={snapshotUrl} onChange={(e) => setSnapshotUrl(e.target.value)} placeholder="http://192.168.1.100/snapshot.jpg" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Username</Label>
+                  <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoComplete="off" />
+                </div>
+                <div>
+                  <Label>Password</Label>
+                  <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+                </div>
+              </div>
+              {groups.length > 0 && (
+                <div>
+                  <Label>Group</Label>
+                  <Select value={groupId} onChange={setGroupId}>
+                    <option value="">No group</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </Select>
+                </div>
+              )}
             </div>
           )}
         </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn onClick={handleSave} disabled={!name.trim() || !url.trim()}>Add Camera</Btn>
+
+        <div className="flex justify-end gap-2 px-6 pb-6">
+          <Btn variant="ghost" onClick={handleClose}>Cancel</Btn>
+          {tab === "discover" && !scanDone && !scanning && (
+            <Btn variant="secondary" onClick={() => setTab("manual")}>Enter manually</Btn>
+          )}
+          {tab === "manual" && (
+            <Btn onClick={handleSave} disabled={!canSave}>Add Camera</Btn>
+          )}
         </div>
       </div>
     </div>
@@ -174,17 +343,20 @@ function GestureBindingEditor({
   gestures: CameraGestureBinding[];
   onChange: (gestures: CameraGestureBinding[]) => void;
 }) {
+  const [showGesturePicker, setShowGesturePicker] = useState(false);
+
   const addBinding = (gesture: CameraGestureType) => {
     const binding: CameraGestureBinding = {
       id: `cgb-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       gesture,
-      name: gesture === "palm" ? "Palm Action" : "Fist Action",
+      name: CAMERA_GESTURE_DEFS[gesture].label,
       holdTime: 800,
       cooldown: 3000,
       actions: [],
       enabled: true,
     };
     onChange([...gestures, binding]);
+    setShowGesturePicker(false);
   };
 
   const updateBinding = (id: string, updates: Partial<CameraGestureBinding>) => {
@@ -315,17 +487,46 @@ function GestureBindingEditor({
         </div>
       ))}
 
-      <div className="flex gap-2">
-        <Btn variant="ghost" size="sm" onClick={() => addBinding("palm")}>
-          <span className="flex items-center gap-1.5">
-            <GestureIcon gesture="palm" size={14} /> Add Palm Gesture
-          </span>
-        </Btn>
-        <Btn variant="ghost" size="sm" onClick={() => addBinding("fist")}>
-          <span className="flex items-center gap-1.5">
-            <GestureIcon gesture="fist" size={14} /> Add Fist Gesture
-          </span>
-        </Btn>
+      <div className="mt-4">
+        {showGesturePicker ? (
+          <div>
+            <p className="text-xs text-gray-500 mb-2">Choose a gesture to add:</p>
+            <div className="grid grid-cols-5 gap-2">
+              {(Object.keys(CAMERA_GESTURE_DEFS) as CameraGestureType[]).map((g) => {
+                const def = CAMERA_GESTURE_DEFS[g];
+                const already = gestures.some((b) => b.gesture === g);
+                return (
+                  <button
+                    key={g}
+                    onClick={() => addBinding(g)}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl p-3 border transition-all ${
+                      already
+                        ? "border-zegy-500/40 bg-zegy-600/10 opacity-60"
+                        : "border-white/[0.06] bg-surface-overlay hover:border-zegy-500/40 hover:bg-zegy-600/10"
+                    }`}
+                    title={def.description}
+                  >
+                    <span style={{ fontSize: 26 }}>{def.emoji}</span>
+                    <span className="text-[11px] font-medium text-gray-300 leading-tight text-center">{def.label}</span>
+                    {already && <span className="text-[9px] text-zegy-400">Added</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => setShowGesturePicker(false)} className="mt-2 text-xs text-gray-600 hover:text-gray-400">
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <Btn variant="ghost" size="sm" onClick={() => setShowGesturePicker(true)}>
+            <span className="flex items-center gap-1.5">
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Add Gesture Binding
+            </span>
+          </Btn>
+        )}
       </div>
     </div>
   );

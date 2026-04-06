@@ -217,6 +217,11 @@ export const api = {
     request<{ ok: boolean }>(`/api/camera-groups/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+
+  discoverCameras: (subnet?: string) =>
+    request<{ found: DiscoveredCamera[]; subnets: string[] }>(
+      `/api/cameras/discover${subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""}`,
+    ),
 };
 
 export { BASE };
@@ -306,7 +311,32 @@ interface GestureEvent {
   actionNames?: string[];
 }
 
-export type CameraGestureType = "palm" | "fist";
+export type CameraGestureType = "palm" | "fist" | "point" | "peace" | "thumbs_up";
+
+export interface CameraGestureDef {
+  label: string;
+  description: string;
+  emoji: string;
+}
+
+export const CAMERA_GESTURE_DEFS: Record<CameraGestureType, CameraGestureDef> = {
+  palm:      { label: "Open Palm",   description: "All 5 fingers fully extended",        emoji: "✋" },
+  fist:      { label: "Fist",        description: "All fingers curled into a closed fist", emoji: "✊" },
+  point:     { label: "Point",       description: "Index finger up, others curled",        emoji: "☝️" },
+  peace:     { label: "Peace / V",   description: "Index + middle fingers extended",       emoji: "✌️" },
+  thumbs_up: { label: "Thumbs Up",   description: "Thumb extended, fingers curled",        emoji: "👍" },
+};
+
+export interface DiscoveredCamera {
+  ip: string;
+  port: number;
+  name: string;
+  streamUrl: string;
+  snapshotUrl: string;
+  brand: string | null;
+  confidence: "confirmed" | "likely";
+  requiresAuth: boolean;
+}
 
 export interface CameraGestureBinding {
   id: string;
