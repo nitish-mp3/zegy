@@ -710,10 +710,9 @@ function LivePreview({
   const { ready, loadError, detectFromVideo } = useHandDetection(camera.calibration, camera.enabled);
 
   const streamUrl = api.getCameraStreamUrl(camera.id);
-  const isRtsp = /^rtsp:\/\//i.test(camera.url);
 
   useEffect(() => {
-    if (isRtsp || !imgRef.current) return;
+    if (!imgRef.current) return;
     offscreenRef.current = document.createElement("canvas");
     const img = imgRef.current;
     img.crossOrigin = "anonymous";
@@ -727,10 +726,10 @@ function LivePreview({
       setStreamState("loading");
       setCurrentDetection({ gesture: null, confidence: 0 });
     };
-  }, [streamUrl, isRtsp]);
+  }, [streamUrl]);
 
   useEffect(() => {
-    if (isRtsp || !ready || !imgRef.current || !canvasRef.current || !overlayRef.current) return;
+    if (!ready || !imgRef.current || !canvasRef.current || !overlayRef.current) return;
     const img = imgRef.current;
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
@@ -797,23 +796,7 @@ function LivePreview({
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [ready, camera.gestures, detectFromVideo, onGestureDetected, isRtsp]);
-
-  if (isRtsp) {
-    return (
-      <div className="aspect-video bg-surface-overlay rounded-xl flex flex-col items-center justify-center gap-3 p-5 text-center">
-        <div className="w-10 h-10 rounded-xl bg-yellow-600/15 flex items-center justify-center">
-          <svg className="h-5 w-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
-          </svg>
-        </div>
-        <div>
-          <p className="text-sm font-medium text-gray-300">RTSP stream not supported</p>
-          <p className="text-xs text-gray-500 mt-1 max-w-xs">Browsers cannot play RTSP directly. In your camera&#39;s web interface, enable the <strong className="text-gray-400">MJPEG / HTTP stream</strong> and paste that URL instead.</p>
-        </div>
-      </div>
-    );
-  }
+  }, [ready, camera.gestures, detectFromVideo, onGestureDetected]);
 
   return (
     <div className="relative aspect-video bg-black rounded-xl overflow-hidden">
@@ -835,9 +818,12 @@ function LivePreview({
       )}
 
       {!loadError && streamState === "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-5 gap-2 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-5 gap-3 text-center">
           <p className="text-red-400 text-sm">Stream unavailable</p>
-          <p className="text-xs text-gray-500">Camera may be offline or the URL is incorrect. An HTTP MJPEG URL is required (e.g. <span className="text-gray-400">http://ip/mjpeg</span>).</p>
+          <p className="text-xs text-gray-500 max-w-xs">
+            Camera may be offline, the URL is wrong, or credentials failed.
+            Supports HTTP MJPEG and RTSP (requires FFmpeg on the host).
+          </p>
         </div>
       )}
 

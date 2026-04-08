@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import { loadJson, saveJson } from "../store";
 import { callService } from "../ha/client";
@@ -279,10 +280,52 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
     if (!camera.url) return reply.status(400).send({ error: "No URL configured" });
 
     if (/^rtsp:\/\//i.test(camera.url)) {
-      return reply.status(400).send({
-        error: "RTSP streams cannot be played directly in the browser. Use an HTTP MJPEG URL from your camera settings.",
-        code: "RTSP_NOT_SUPPORTED",
+      // Transcode RTSP → MJPEG via FFmpeg so any browser can display it.
+      let rtspUrl = camera.url;
+      if (camera.username) {
+        const withoutScheme = camera.url.slice("rtsp://".length);
+        rtspUrl = `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(camera.password)}@${withoutScheme}`;
+      }
+
+      const proc = spawn(
+        "ffmpeg",
+        [
+          "-loglevel", "quiet",
+          "-rtsp_transport", "tcp",
+          "-i", rtspUrl,
+          "-f", "mpjpeg",
+          "-q:v", "5",
+          "-r", "10",
+          "pipe:1",
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+
+      const { stdout } = proc;
+      if (!stdout) {
+        return reply.status(502).send({ error: "Failed to start stream process" });
+      }
+
+      proc.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") {
+          logger.error({ cameraId: camera.id }, "FFmpeg not found — install FFmpeg to enable RTSP streaming");
+        } else {
+          logger.error({ err, cameraId: camera.id }, "FFmpeg process error");
+        }
+        if (!reply.raw.headersSent) {
+          reply.status(502).send({ error: "RTSP transcoder unavailable. Ensure FFmpeg is installed." });
+        }
       });
+
+      reply.raw.writeHead(200, {
+        "Content-Type": "multipart/x-mixed-replace; boundary=ffserver",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+      });
+
+      stdout.pipe(reply.raw);
+      req.raw.on("close", () => proc.kill("SIGTERM"));
+      return;
     }
 
     const controller = new AbortController();
