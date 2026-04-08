@@ -548,8 +548,9 @@ function CalibrationModal({
   onClose: () => void;
   onComplete: (palmFeatures: number[][], fistFeatures: number[][]) => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef(0);
   const [step, setStep] = useState<"idle" | "palm" | "fist" | "done">("idle");
   const [samples, setSamples] = useState<{ palm: number[][]; fist: number[][] }>({ palm: [], fist: [] });
@@ -560,32 +561,31 @@ function CalibrationModal({
   const streamUrl = camera ? api.getCameraStreamUrl(camera.id) : "";
 
   useEffect(() => {
-    if (!open || !camera || !videoRef.current) return;
-    const video = videoRef.current;
-    video.src = streamUrl;
-    video.crossOrigin = "anonymous";
-    video.play().catch(() => {});
-
+    if (!open || !camera || !imgRef.current) return;
+    offscreenRef.current = document.createElement("canvas");
+    const img = imgRef.current;
+    img.crossOrigin = "anonymous";
+    img.src = streamUrl;
     return () => {
-      video.pause();
-      video.src = "";
+      img.src = "";
       if (sampleIntervalRef.current) clearInterval(sampleIntervalRef.current);
       cancelAnimationFrame(rafRef.current);
     };
   }, [open, camera, streamUrl]);
 
   useEffect(() => {
-    if (!open || !canvasRef.current || !videoRef.current) return;
+    if (!open || !canvasRef.current || !imgRef.current) return;
+    const img = imgRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     const draw = () => {
-      const video = videoRef.current;
-      if (!video || video.paused) return;
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      ctx.drawImage(video, 0, 0);
+      if (img.naturalWidth > 0) {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        try { ctx.drawImage(img, 0, 0); } catch { /* cross-origin guard */ }
+      }
       rafRef.current = requestAnimationFrame(draw);
     };
     rafRef.current = requestAnimationFrame(draw);
@@ -594,7 +594,7 @@ function CalibrationModal({
 
   const startCapture = useCallback(
     (gesture: "palm" | "fist") => {
-      if (!videoRef.current || !ready) return;
+      if (!ready) return;
       setStep(gesture);
       setCountdown(3);
 
@@ -606,22 +606,22 @@ function CalibrationModal({
           clearInterval(timer);
           let captured = 0;
           sampleIntervalRef.current = setInterval(() => {
-            if (!videoRef.current) return;
-            const features = captureFeatures(videoRef.current, performance.now());
+            const img = imgRef.current;
+            const offscreen = offscreenRef.current;
+            if (!img || img.naturalWidth === 0 || !offscreen) return;
+            offscreen.width = img.naturalWidth;
+            offscreen.height = img.naturalHeight;
+            const offCtx = offscreen.getContext("2d");
+            if (!offCtx) return;
+            try { offCtx.drawImage(img, 0, 0); } catch { return; }
+            const features = captureFeatures(offscreen, performance.now());
             if (features) {
-              setSamples((prev) => ({
-                ...prev,
-                [gesture]: [...prev[gesture], features],
-              }));
+              setSamples((prev) => ({ ...prev, [gesture]: [...prev[gesture], features] }));
               captured++;
             }
             if (captured >= 10) {
               if (sampleIntervalRef.current) clearInterval(sampleIntervalRef.current);
-              if (gesture === "palm") {
-                setStep("idle");
-              } else {
-                setStep("done");
-              }
+              setStep(gesture === "palm" ? "idle" : "done");
             }
           }, 200);
         }
@@ -645,7 +645,7 @@ function CalibrationModal({
         <h3 className="section-title mb-4">Calibrate — {camera.name}</h3>
 
         <div className="relative aspect-video bg-black rounded-xl overflow-hidden mb-4">
-          <video ref={videoRef} className="hidden" muted playsInline />
+          <img ref={imgRef} className="hidden" alt="" />
           <canvas ref={canvasRef} className="w-full h-full object-contain" />
           {countdown > 0 && (
             <div className="absolute inset-0 flex items-center justify-center">
@@ -698,32 +698,40 @@ function LivePreview({
   camera: CameraConfig;
   onGestureDetected: (gesture: CameraGestureType) => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef(0);
   const lastGestureRef = useRef<{ gesture: CameraGestureType; since: number } | null>(null);
   const cooldownUntilRef = useRef(0);
+  const [streamState, setStreamState] = useState<"loading" | "live" | "error">("loading");
   const [currentDetection, setCurrentDetection] = useState<{ gesture: CameraGestureType | null; confidence: number }>({ gesture: null, confidence: 0 });
   const { ready, loadError, detectFromVideo } = useHandDetection(camera.calibration, camera.enabled);
 
   const streamUrl = api.getCameraStreamUrl(camera.id);
+  const isRtsp = /^rtsp:\/\//i.test(camera.url);
 
   useEffect(() => {
-    if (!videoRef.current) return;
-    const video = videoRef.current;
-    video.src = streamUrl;
-    video.crossOrigin = "anonymous";
-    video.play().catch(() => {});
+    if (isRtsp || !imgRef.current) return;
+    offscreenRef.current = document.createElement("canvas");
+    const img = imgRef.current;
+    img.crossOrigin = "anonymous";
+    img.onload = () => setStreamState("live");
+    img.onerror = () => setStreamState("error");
+    img.src = streamUrl;
     return () => {
-      video.pause();
-      video.src = "";
+      img.src = "";
+      img.onload = null;
+      img.onerror = null;
+      setStreamState("loading");
+      setCurrentDetection({ gesture: null, confidence: 0 });
     };
-  }, [streamUrl]);
+  }, [streamUrl, isRtsp]);
 
   useEffect(() => {
-    if (!videoRef.current || !canvasRef.current || !overlayRef.current || !ready) return;
-    const video = videoRef.current;
+    if (isRtsp || !ready || !imgRef.current || !canvasRef.current || !overlayRef.current) return;
+    const img = imgRef.current;
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
     const ctx = canvas.getContext("2d");
@@ -735,73 +743,111 @@ function LivePreview({
     const cooldowns = Object.fromEntries(activeBindings.map((g) => [g.gesture, g.cooldown]));
 
     const loop = () => {
-      if (video.paused || video.ended) {
-        rafRef.current = requestAnimationFrame(loop);
-        return;
-      }
-
-      const w = video.videoWidth || 640;
-      const h = video.videoHeight || 480;
-      canvas.width = w;
-      canvas.height = h;
-      overlay.width = w;
-      overlay.height = h;
-
-      ctx.drawImage(video, 0, 0);
-
-      const result = detectFromVideo(video, performance.now());
-      octx.clearRect(0, 0, w, h);
-
-      if (result.landmarks) {
-        octx.fillStyle = "#14b8a6";
-        for (const lm of result.landmarks) {
-          octx.beginPath();
-          octx.arc(lm.x * w, lm.y * h, 3, 0, Math.PI * 2);
-          octx.fill();
+      const offscreen = offscreenRef.current;
+      if (img.naturalWidth > 0 && offscreen) {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w; canvas.height = h;
+          overlay.width = w; overlay.height = h;
+          offscreen.width = w; offscreen.height = h;
         }
-      }
+        const offCtx = offscreen.getContext("2d");
+        try {
+          ctx.drawImage(img, 0, 0);
+          if (offCtx) offCtx.drawImage(img, 0, 0);
+        } catch {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
 
-      const now = performance.now();
-      setCurrentDetection({ gesture: result.gesture, confidence: result.confidence });
+        const result = detectFromVideo(offscreen, performance.now());
+        octx.clearRect(0, 0, w, h);
 
-      if (result.gesture && result.confidence > 0.55 && now > cooldownUntilRef.current) {
-        if (lastGestureRef.current && lastGestureRef.current.gesture === result.gesture) {
-          const held = now - lastGestureRef.current.since;
-          const requiredHold = holdTimes[result.gesture] ?? 800;
-          if (held >= requiredHold) {
-            onGestureDetected(result.gesture);
-            cooldownUntilRef.current = now + (cooldowns[result.gesture] ?? 3000);
-            lastGestureRef.current = null;
+        if (result.landmarks) {
+          octx.fillStyle = "#14b8a6";
+          for (const lm of result.landmarks) {
+            octx.beginPath();
+            octx.arc(lm.x * w, lm.y * h, 3, 0, Math.PI * 2);
+            octx.fill();
           }
-        } else {
-          lastGestureRef.current = { gesture: result.gesture, since: now };
         }
-      } else if (!result.gesture) {
-        lastGestureRef.current = null;
-      }
 
+        const now = performance.now();
+        setCurrentDetection({ gesture: result.gesture, confidence: result.confidence });
+
+        if (result.gesture && result.confidence > 0.55 && now > cooldownUntilRef.current) {
+          if (lastGestureRef.current && lastGestureRef.current.gesture === result.gesture) {
+            const held = now - lastGestureRef.current.since;
+            const requiredHold = holdTimes[result.gesture] ?? 800;
+            if (held >= requiredHold) {
+              onGestureDetected(result.gesture);
+              cooldownUntilRef.current = now + (cooldowns[result.gesture] ?? 3000);
+              lastGestureRef.current = null;
+            }
+          } else {
+            lastGestureRef.current = { gesture: result.gesture, since: now };
+          }
+        } else if (!result.gesture) {
+          lastGestureRef.current = null;
+        }
+      }
       rafRef.current = requestAnimationFrame(loop);
     };
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [ready, camera.gestures, detectFromVideo, onGestureDetected]);
+  }, [ready, camera.gestures, detectFromVideo, onGestureDetected, isRtsp]);
+
+  if (isRtsp) {
+    return (
+      <div className="aspect-video bg-surface-overlay rounded-xl flex flex-col items-center justify-center gap-3 p-5 text-center">
+        <div className="w-10 h-10 rounded-xl bg-yellow-600/15 flex items-center justify-center">
+          <svg className="h-5 w-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-sm font-medium text-gray-300">RTSP stream not supported</p>
+          <p className="text-xs text-gray-500 mt-1 max-w-xs">Browsers cannot play RTSP directly. In your camera&#39;s web interface, enable the <strong className="text-gray-400">MJPEG / HTTP stream</strong> and paste that URL instead.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative aspect-video bg-black rounded-xl overflow-hidden">
-      <video ref={videoRef} className="hidden" muted playsInline />
+      <img ref={imgRef} className="hidden" alt="" />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain" />
       <canvas ref={overlayRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
+
       {loadError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-          <p className="text-red-400 text-sm px-4 text-center">{loadError}</p>
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-4">
+          <p className="text-red-400 text-sm text-center">{loadError}</p>
         </div>
       )}
-      {!ready && !loadError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-          <p className="text-gray-400 text-sm">Loading detection model...</p>
+
+      {!loadError && streamState === "loading" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-2">
+          <div className="h-5 w-5 border-2 border-zegy-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-gray-500 text-xs">Connecting to camera...</p>
         </div>
       )}
+
+      {!loadError && streamState === "error" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-5 gap-2 text-center">
+          <p className="text-red-400 text-sm">Stream unavailable</p>
+          <p className="text-xs text-gray-500">Camera may be offline or the URL is incorrect. An HTTP MJPEG URL is required (e.g. <span className="text-gray-400">http://ip/mjpeg</span>).</p>
+        </div>
+      )}
+
+      {!loadError && streamState === "live" && !ready && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 gap-2">
+          <div className="h-5 w-5 border-2 border-zegy-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-gray-400 text-xs">Loading gesture model...</p>
+        </div>
+      )}
+
       {currentDetection.gesture && (
         <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/70 text-white px-3 py-1.5 rounded-lg text-sm">
           <GestureIcon gesture={currentDetection.gesture} size={16} />

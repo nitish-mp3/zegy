@@ -175,13 +175,13 @@ export function useHandDetection(
   }, [enabled]);
 
   const detectFromVideo = useCallback(
-    (video: HTMLVideoElement, timestamp: number): HandDetectionResult => {
+    (source: HTMLVideoElement | HTMLCanvasElement, timestamp: number): HandDetectionResult => {
       if (!landmarkerRef.current || !ready) {
         return { gesture: null, confidence: 0, landmarks: null, fingerExtensions: [] };
       }
 
       try {
-        const results = landmarkerRef.current.detectForVideo(video, timestamp);
+        const results = landmarkerRef.current.detectForVideo(source as HTMLVideoElement, timestamp);
         if (!results.landmarks || results.landmarks.length === 0) {
           return { gesture: null, confidence: 0, landmarks: null, fingerExtensions: [] };
         }
@@ -200,10 +200,10 @@ export function useHandDetection(
   );
 
   const captureFeatures = useCallback(
-    (video: HTMLVideoElement, timestamp: number): number[] | null => {
+    (source: HTMLVideoElement | HTMLCanvasElement, timestamp: number): number[] | null => {
       if (!landmarkerRef.current || !ready) return null;
       try {
-        const results = landmarkerRef.current.detectForVideo(video, timestamp);
+        const results = landmarkerRef.current.detectForVideo(source as HTMLVideoElement, timestamp);
         if (!results.landmarks || results.landmarks.length === 0) return null;
         return computeFeatureVector(results.landmarks[0]);
       } catch {

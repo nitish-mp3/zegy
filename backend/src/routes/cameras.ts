@@ -278,13 +278,25 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
 
     if (!camera.url) return reply.status(400).send({ error: "No URL configured" });
 
+    if (/^rtsp:\/\//i.test(camera.url)) {
+      return reply.status(400).send({
+        error: "RTSP streams cannot be played directly in the browser. Use an HTTP MJPEG URL from your camera settings.",
+        code: "RTSP_NOT_SUPPORTED",
+      });
+    }
+
+    const controller = new AbortController();
+    const onReqClose = () => controller.abort();
+    req.raw.on("close", onReqClose);
+
     try {
       const upstream = await fetch(camera.url, {
         headers: buildAuthHeaders(camera),
-        signal: AbortSignal.timeout(15000),
+        signal: controller.signal,
       });
 
       if (!upstream.ok || !upstream.body) {
+        req.raw.off("close", onReqClose);
         return reply.status(502).send({ error: "Camera stream unavailable" });
       }
 
@@ -293,19 +305,21 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
       reply.raw.writeHead(200, {
         "Content-Type": contentType,
         "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Connection": "close",
         "Pragma": "no-cache",
       });
 
       const readable = Readable.fromWeb(upstream.body as never);
       readable.pipe(reply.raw);
 
-      req.raw.on("close", () => {
-        readable.destroy();
-      });
+      req.raw.on("close", () => readable.destroy());
     } catch (err) {
-      logger.debug({ err, cameraId: camera.id }, "Camera stream failed");
-      return reply.status(502).send({ error: "Camera stream unavailable" });
+      req.raw.off("close", onReqClose);
+      if ((err as { name?: string }).name !== "AbortError") {
+        logger.debug({ err, cameraId: camera.id }, "Camera stream failed");
+      }
+      if (!reply.raw.headersSent) {
+        return reply.status(502).send({ error: "Camera stream unavailable" });
+      }
     }
   });
 
