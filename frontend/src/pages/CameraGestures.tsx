@@ -105,6 +105,31 @@ function AddCameraModal({
 
   if (!open) return null;
 
+  const handleUrlChange = (raw: string) => {
+    const rtspEmbed = raw.match(/^(rtsp:\/\/)([^:@\s]+):([^@\s]*)@(.+)$/i);
+    if (rtspEmbed) {
+      setUrl(`rtsp://${rtspEmbed[4]}`);
+      if (!username) setUsername(rtspEmbed[2]);
+      if (!password) setPassword(rtspEmbed[3]);
+      return;
+    }
+    const httpEmbed = raw.match(/^(https?:\/\/)([^:@\s]+):([^@\s]*)@(.+)$/i);
+    if (httpEmbed) {
+      setUrl(`${httpEmbed[1]}${httpEmbed[4]}`);
+      if (!username) setUsername(httpEmbed[2]);
+      if (!password) setPassword(httpEmbed[3]);
+      return;
+    }
+    setUrl(raw);
+  };
+
+  const urlProtocol = (() => {
+    if (/^rtsp:\/\//i.test(url)) return "RTSP";
+    if (/^https:\/\//i.test(url)) return "HTTPS";
+    if (/^http:\/\//i.test(url)) return "HTTP";
+    return null;
+  })();
+
   const handleSave = () => {
     if (!name.trim() || !url.trim()) return;
     onSave({ name: name.trim(), url: url.trim(), snapshotUrl: snapshotUrl.trim(), username, password, groupId: groupId || null });
@@ -292,8 +317,22 @@ function AddCameraModal({
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Living Room Camera" />
               </div>
               <div>
-                <Label>Stream URL</Label>
-                <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.100/video" />
+                <div className="flex items-center justify-between mb-1">
+                  <Label>Stream URL</Label>
+                  {urlProtocol && (
+                    <span className={`badge text-[10px] ${
+                      urlProtocol === "RTSP" ? "bg-purple-600/20 text-purple-300" : "bg-blue-600/20 text-blue-300"
+                    }`}>{urlProtocol}</span>
+                  )}
+                </div>
+                <Input
+                  value={url}
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  placeholder="rtsp://192.168.1.100:554/stream  or  http://ip/video"
+                />
+                {urlProtocol === "RTSP" && (
+                  <p className="text-[11px] text-gray-500 mt-1">Paste full URL with credentials (rtsp://user:pass@host/path) — they will auto-split below.</p>
+                )}
               </div>
               <div>
                 <Label>Snapshot URL (optional)</Label>

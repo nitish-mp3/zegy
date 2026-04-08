@@ -281,12 +281,13 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
     if (!camera.url) return reply.status(400).send({ error: "No URL configured" });
 
     if (/^rtsp:\/\//i.test(camera.url)) {
-      // Transcode RTSP → MJPEG via FFmpeg so any browser can display it.
-      let rtspUrl = camera.url;
-      if (camera.username) {
-        const withoutScheme = camera.url.slice("rtsp://".length);
-        rtspUrl = `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(camera.password)}@${withoutScheme}`;
-      }
+      const embedMatch = camera.url.match(/^rtsp:\/\/([^:@]+):([^@]*)@(.+)$/i);
+      const baseRtsp = embedMatch ? `rtsp://${embedMatch[3]}` : camera.url;
+      const user = camera.username || (embedMatch ? embedMatch[1] : "");
+      const pass = camera.password || (embedMatch ? embedMatch[2] : "");
+      const rtspUrl = user
+        ? `rtsp://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${baseRtsp.slice("rtsp://".length)}`
+        : baseRtsp;
 
       if (!ffmpegBin) {
         return reply.status(502).send({ error: "FFmpeg binary not found in package" });
