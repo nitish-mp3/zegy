@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import os from "node:os";
+import ffmpegBin from "ffmpeg-static";
 import { loadJson, saveJson } from "../store";
 import { callService } from "../ha/client";
 import { logger } from "../logger";
@@ -287,8 +288,12 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
         rtspUrl = `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(camera.password)}@${withoutScheme}`;
       }
 
+      if (!ffmpegBin) {
+        return reply.status(502).send({ error: "FFmpeg binary not found in package" });
+      }
+
       const proc = spawn(
-        "ffmpeg",
+        ffmpegBin,
         [
           "-loglevel", "quiet",
           "-rtsp_transport", "tcp",
@@ -307,13 +312,9 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
       }
 
       proc.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code === "ENOENT") {
-          logger.error({ cameraId: camera.id }, "FFmpeg not found — install FFmpeg to enable RTSP streaming");
-        } else {
-          logger.error({ err, cameraId: camera.id }, "FFmpeg process error");
-        }
+        logger.error({ err, cameraId: camera.id }, "FFmpeg process error");
         if (!reply.raw.headersSent) {
-          reply.status(502).send({ error: "RTSP transcoder unavailable. Ensure FFmpeg is installed." });
+          reply.status(502).send({ error: "RTSP stream failed" });
         }
       });
 
