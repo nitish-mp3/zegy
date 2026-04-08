@@ -754,11 +754,37 @@ function LivePreview({
     if (!imgRef.current) return;
     offscreenRef.current = document.createElement("canvas");
     const img = imgRef.current;
+    let errorTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
     img.crossOrigin = "anonymous";
-    img.onload = () => setStreamState("live");
-    img.onerror = () => setStreamState("error");
+    img.onload = () => {
+      if (cancelled) return;
+      if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
+      setStreamState("live");
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      // For RTSP streams, the backend sends 200 immediately then data arrives
+      // a few seconds later. The browser fires onerror on the empty initial
+      // response. Retry after a short delay instead of showing an error.
+      if (errorTimer) clearTimeout(errorTimer);
+      errorTimer = setTimeout(() => {
+        if (cancelled) return;
+        // Check if we actually got live frames (canvas has content) before erroring
+        const offscreen = offscreenRef.current;
+        if (offscreen && offscreen.width > 0) {
+          setStreamState("live");
+          return;
+        }
+        setStreamState("error");
+      }, 8000);
+    };
     img.src = streamUrl;
+
     return () => {
+      cancelled = true;
+      if (errorTimer) clearTimeout(errorTimer);
       img.src = "";
       img.onload = null;
       img.onerror = null;

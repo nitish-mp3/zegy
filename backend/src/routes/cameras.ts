@@ -293,7 +293,15 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(502).send({ error: "FFmpeg binary not found in package" });
       }
 
+      // Hijack and send 200 headers immediately so the browser doesn't time out
+      // waiting for FFmpeg to connect (RTSP negotiation takes 2-3 s).
       reply.hijack();
+      reply.raw.writeHead(200, {
+        "Content-Type": "multipart/x-mixed-replace; boundary=ffserver",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Access-Control-Allow-Origin": "*",
+      });
 
       const proc = spawn(
         ffmpegBin,
@@ -311,31 +319,16 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
 
       const { stdout, stderr } = proc;
       if (!stdout) {
-        reply.raw.writeHead(502, { "Content-Type": "application/json" });
-        reply.raw.end(JSON.stringify({ error: "Failed to start stream process" }));
+        reply.raw.end();
         return reply;
       }
 
-      let headersWritten = false;
-
-      const sendError = (msg: string) => {
-        if (!headersWritten && !reply.raw.headersSent) {
-          reply.raw.writeHead(502, { "Content-Type": "application/json" });
-          reply.raw.end(JSON.stringify({ error: msg }));
-        }
-      };
-
       proc.on("error", (err: NodeJS.ErrnoException) => {
         logger.error({ err, cameraId: camera.id }, "FFmpeg process error");
-        sendError("RTSP stream failed");
+        if (!reply.raw.destroyed) reply.raw.end();
       });
 
-      proc.on("close", (code) => {
-        if (!headersWritten) {
-          logger.error({ code, cameraId: camera.id }, "FFmpeg exited before sending any frames");
-          sendError("RTSP stream failed — check URL and credentials");
-          return;
-        }
+      proc.on("close", () => {
         if (!reply.raw.destroyed) reply.raw.end();
       });
 
@@ -343,18 +336,7 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
         logger.error({ msg: chunk.toString().trim(), cameraId: camera.id }, "FFmpeg stderr");
       });
 
-      stdout.once("data", (firstChunk: Buffer) => {
-        headersWritten = true;
-        reply.raw.writeHead(200, {
-          "Content-Type": "multipart/x-mixed-replace; boundary=ffserver",
-          "Cache-Control": "no-cache",
-          "Pragma": "no-cache",
-          "Access-Control-Allow-Origin": "*",
-        });
-        reply.raw.write(firstChunk);
-        stdout.pipe(reply.raw, { end: false });
-      });
-
+      stdout.pipe(reply.raw, { end: false });
       req.raw.on("close", () => proc.kill("SIGTERM"));
       return reply;
     }
