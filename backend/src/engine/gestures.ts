@@ -1,5 +1,5 @@
 import type { TrackFrame, GestureBinding, GestureEvent, GestureType } from "../types";
-import { callService } from "../ha/client";
+import { executeActions } from "../actions";
 import { logger } from "../logger";
 
 type GestureEventCallback = (event: GestureEvent) => void;
@@ -422,26 +422,6 @@ function computeGestureScores(
   }
 
   return scores;
-}
-
-async function executeActions(
-  actions: { entityId: string; service: string; data?: Record<string, unknown>; delay: number }[],
-): Promise<void> {
-  for (const action of actions) {
-    if (action.delay > 0) {
-      await new Promise<void>((r) => setTimeout(r, action.delay));
-    }
-    try {
-      const domain = action.entityId.split(".")[0];
-      await callService(domain, action.service, {
-        entity_id: action.entityId,
-        ...action.data,
-      });
-      logger.info({ entityId: action.entityId, service: action.service }, "Gesture action executed");
-    } catch (err) {
-      logger.error({ err, entityId: action.entityId }, "Failed to execute gesture action");
-    }
-  }
 }
 
 function isInZone(

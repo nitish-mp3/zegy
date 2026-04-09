@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import ffmpegBin from "ffmpeg-static";
 import { loadJson, saveJson } from "../store";
-import { callService } from "../ha/client";
+import { executeActions } from "../actions";
 import { logger } from "../logger";
 import type {
   CameraConfig,
@@ -88,23 +88,7 @@ function buildAuthHeaders(cam: CameraConfig): Record<string, string> {
   };
 }
 
-async function executeGestureActions(actions: ActionStep[]): Promise<void> {
-  for (const action of actions) {
-    if (action.delay > 0) {
-      await new Promise<void>((r) => setTimeout(r, action.delay));
-    }
-    try {
-      const domain = action.entityId.split(".")[0];
-      await callService(domain, action.service, {
-        entity_id: action.entityId,
-        ...action.data,
-      });
-      logger.info({ entityId: action.entityId, service: action.service }, "Camera gesture action executed");
-    } catch (err) {
-      logger.error({ err, entityId: action.entityId }, "Failed to execute camera gesture action");
-    }
-  }
-}
+
 
 export async function cameraRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/cameras", async (_req, reply) => {
@@ -238,7 +222,7 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
 
     const allActions = matchingBindings.flatMap((b) => b.actions);
     if (allActions.length > 0) {
-      executeGestureActions(allActions).catch(() => {});
+      executeActions(allActions).catch(() => {});
     }
 
     logger.info({ cameraId: camera.id, gesture, bindings: matchingBindings.length }, "Camera gesture triggered");

@@ -226,14 +226,10 @@ export const api = {
 
 export { BASE };
 
-// Types used by the API
-interface ActionStep {
-  id: string;
-  entityId: string;
-  service: string;
-  data?: Record<string, unknown>;
-  delay: number;
-}
+export type ActionStep =
+  | { id: string; type?: "ha_service"; entityId: string; service: string; data?: Record<string, unknown>; delay: number }
+  | { id: string; type: "mqtt_publish"; topic: string; payload: string; delay: number }
+  | { id: string; type: "webhook"; url: string; method: string; body?: string; headers?: Record<string, string>; delay: number };
 
 interface Zone {
   id: string;
@@ -283,9 +279,16 @@ type GestureType =
 
 interface GestureAction {
   id: string;
-  entityId: string;
-  service: string;
+  type?: "ha_service" | "mqtt_publish" | "webhook";
+  entityId?: string;
+  service?: string;
   data?: Record<string, unknown>;
+  topic?: string;
+  payload?: string;
+  url?: string;
+  method?: string;
+  body?: string;
+  headers?: Record<string, string>;
   delay: number;
 }
 

@@ -1,5 +1,5 @@
 import type { Zone, TrackFrame, ZoneEvent, ZonePoint } from "../types";
-import { callService } from "../ha/client";
+import { executeActions } from "../actions";
 import { isAuxiliaryActive } from "./presence";
 import { logger } from "../logger";
 
@@ -74,26 +74,6 @@ function emitEvent(event: ZoneEvent): void {
   recentEvents.unshift(event);
   if (recentEvents.length > MAX_EVENTS) recentEvents.pop();
   for (const cb of eventListeners) cb(event);
-}
-
-async function executeActions(
-  actions: { entityId: string; service: string; data?: Record<string, unknown>; delay: number }[],
-): Promise<void> {
-  for (const action of actions) {
-    if (action.delay > 0) {
-      await new Promise<void>((r) => setTimeout(r, action.delay));
-    }
-    try {
-      const domain = action.entityId.split(".")[0];
-      await callService(domain, action.service, {
-        entity_id: action.entityId,
-        ...action.data,
-      });
-      logger.info({ entityId: action.entityId, service: action.service }, "Zone action executed");
-    } catch (err) {
-      logger.error({ err, entityId: action.entityId }, "Failed to execute zone action");
-    }
-  }
 }
 
 export function processTrackFrame(frame: TrackFrame, zones: Zone[]): void {

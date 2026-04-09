@@ -90,8 +90,14 @@ export default function FloorPlan() {
   /* Zone edit panel */
   const [editZone, setEditZone] = useState<Zone | null>(null);
   const [addingAction, setAddingAction] = useState<"enter" | "exit" | null>(null);
+  const [newActionType, setNewActionType] = useState<"ha_service" | "mqtt_publish" | "webhook">("ha_service");
   const [newActionEntity, setNewActionEntity] = useState("");
   const [newActionService, setNewActionService] = useState("turn_on");
+  const [newActionTopic, setNewActionTopic] = useState("");
+  const [newActionPayload, setNewActionPayload] = useState("");
+  const [newActionUrl, setNewActionUrl] = useState("");
+  const [newActionMethod, setNewActionMethod] = useState("POST");
+  const [newActionBody, setNewActionBody] = useState("");
   const [newActionDelay, setNewActionDelay] = useState(0);
   const [saving, setSaving] = useState(false);
 
@@ -426,20 +432,32 @@ export default function FloorPlan() {
   };
 
   const handleAddAction = () => {
-    if (!editZone || !addingAction || !newActionEntity) return;
-    const action: ActionStep = {
-      id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      entityId: newActionEntity,
-      service: newActionService,
-      delay: newActionDelay,
-    };
+    if (!editZone || !addingAction) return;
+    const id = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    let action: ActionStep;
+    if (newActionType === "mqtt_publish") {
+      if (!newActionTopic) return;
+      action = { id, type: "mqtt_publish", topic: newActionTopic, payload: newActionPayload, delay: newActionDelay };
+    } else if (newActionType === "webhook") {
+      if (!newActionUrl) return;
+      action = { id, type: "webhook", url: newActionUrl, method: newActionMethod, body: newActionBody || undefined, delay: newActionDelay };
+    } else {
+      if (!newActionEntity) return;
+      action = { id, type: "ha_service", entityId: newActionEntity, service: newActionService, delay: newActionDelay };
+    }
     const updated = { ...editZone };
     if (addingAction === "enter") { updated.onEnter = [...updated.onEnter, action]; }
     else { updated.onExit = [...updated.onExit, action]; }
     setEditZone(updated);
     setAddingAction(null);
+    setNewActionType("ha_service");
     setNewActionEntity("");
     setNewActionService("turn_on");
+    setNewActionTopic("");
+    setNewActionPayload("");
+    setNewActionUrl("");
+    setNewActionMethod("POST");
+    setNewActionBody("");
     setNewActionDelay(0);
   };
 
@@ -811,18 +829,64 @@ export default function FloorPlan() {
               <div className="rounded-xl bg-white/[0.03] p-3 space-y-2.5 animate-fade-in">
                 <p className="text-xs font-medium text-gray-400">New {addingAction === "enter" ? "Enter" : "Exit"} Action</p>
                 <div>
-                  <label className="block text-[10px] text-gray-600 mb-1">Entity</label>
-                  <select value={newActionEntity} onChange={(e) => { setNewActionEntity(e.target.value); const svcs = getServicesForEntity(e.target.value); if (svcs.length > 0 && !svcs.includes(newActionService)) setNewActionService(svcs[0]); }} className="input text-xs py-2">
-                    <option value="">Select entity...</option>
-                    {controllableEntities.map((e) => <option key={e.entityId} value={e.entityId}>{e.name} ({e.domain})</option>)}
+                  <label className="block text-[10px] text-gray-600 mb-1">Type</label>
+                  <select value={newActionType} onChange={(e) => setNewActionType(e.target.value as typeof newActionType)} className="input text-xs py-2">
+                    <option value="ha_service">HA Service</option>
+                    <option value="mqtt_publish">MQTT Publish</option>
+                    <option value="webhook">Webhook</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-[10px] text-gray-600 mb-1">Service</label>
-                  <select value={newActionService} onChange={(e) => setNewActionService(e.target.value)} className="input text-xs py-2">
-                    {(newActionEntity ? getServicesForEntity(newActionEntity) : ["turn_on", "turn_off", "toggle"]).map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
-                  </select>
-                </div>
+                {newActionType === "ha_service" && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">Entity</label>
+                      <select value={newActionEntity} onChange={(e) => { setNewActionEntity(e.target.value); const svcs = getServicesForEntity(e.target.value); if (svcs.length > 0 && !svcs.includes(newActionService)) setNewActionService(svcs[0]); }} className="input text-xs py-2">
+                        <option value="">Select entity...</option>
+                        {controllableEntities.map((e) => <option key={e.entityId} value={e.entityId}>{e.name} ({e.domain})</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">Service</label>
+                      <select value={newActionService} onChange={(e) => setNewActionService(e.target.value)} className="input text-xs py-2">
+                        {(newActionEntity ? getServicesForEntity(newActionEntity) : ["turn_on", "turn_off", "toggle"]).map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {newActionType === "mqtt_publish" && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">Topic</label>
+                      <input value={newActionTopic} onChange={(e) => setNewActionTopic(e.target.value)} placeholder="zegy/my/topic" className="input text-xs py-2 w-full" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">Payload</label>
+                      <input value={newActionPayload} onChange={(e) => setNewActionPayload(e.target.value)} placeholder='{"state":"on"}' className="input text-xs py-2 w-full" />
+                    </div>
+                  </>
+                )}
+                {newActionType === "webhook" && (
+                  <>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-600 mb-1">Method</label>
+                        <select value={newActionMethod} onChange={(e) => setNewActionMethod(e.target.value)} className="input text-xs py-2">
+                          <option value="POST">POST</option>
+                          <option value="GET">GET</option>
+                          <option value="PUT">PUT</option>
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] text-gray-600 mb-1">URL</label>
+                        <input value={newActionUrl} onChange={(e) => setNewActionUrl(e.target.value)} placeholder="https://example.com/hook" className="input text-xs py-2 w-full" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">Body (optional)</label>
+                      <input value={newActionBody} onChange={(e) => setNewActionBody(e.target.value)} placeholder='{"key":"value"}' className="input text-xs py-2 w-full" />
+                    </div>
+                  </>
+                )}
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-[10px] text-gray-600">Delay</label>
@@ -831,7 +895,7 @@ export default function FloorPlan() {
                   <input type="range" min={0} max={60000} step={500} value={newActionDelay} onChange={(e) => setNewActionDelay(Number(e.target.value))} className="w-full accent-zegy-500" />
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={handleAddAction} disabled={!newActionEntity} className="btn-primary text-xs flex-1 py-2">Add</button>
+                  <button onClick={handleAddAction} className="btn-primary text-xs flex-1 py-2">Add</button>
                   <button onClick={() => setAddingAction(null)} className="btn-secondary text-xs py-2">Cancel</button>
                 </div>
               </div>
@@ -959,17 +1023,29 @@ export default function FloorPlan() {
           <p className="text-[11px] text-gray-700">No actions configured</p>
         ) : (
           <div className="space-y-1">
-            {actions.map((a) => (
+            {actions.map((a) => {
+              const t = (a as { type?: string }).type ?? "ha_service";
+              const label = t === "mqtt_publish"
+                ? `MQTT → ${(a as { topic: string }).topic}`
+                : t === "webhook"
+                  ? `${(a as { method: string }).method} ${(a as { url: string }).url}`
+                  : `${formatEntityName((a as { entityId: string }).entityId)}`;
+              const sub = t === "mqtt_publish"
+                ? `payload: ${(a as { payload: string }).payload || "(empty)"}${a.delay > 0 ? ` - ${(a.delay / 1000).toFixed(1)}s delay` : ""}`
+                : t === "webhook"
+                  ? a.delay > 0 ? `${(a.delay / 1000).toFixed(1)}s delay` : ""
+                  : `${(a as { service: string }).service}${a.delay > 0 ? ` - ${(a.delay / 1000).toFixed(1)}s delay` : ""}`;
+              return (
               <div key={a.id} className="flex items-center justify-between rounded-lg bg-white/[0.03] px-2.5 py-1.5">
                 <div className="min-w-0">
-                  <p className="text-xs text-gray-300 truncate">{formatEntityName(a.entityId)}</p>
-                  <p className="text-[10px] text-gray-600">{a.service}{a.delay > 0 ? ` - ${(a.delay / 1000).toFixed(1)}s delay` : ""}</p>
+                  <p className="text-xs text-gray-300 truncate">{label}</p>
+                  {sub && <p className="text-[10px] text-gray-600">{sub}</p>}
                 </div>
                 <button onClick={() => handleRemoveAction(type, a.id)} className="ml-2 text-gray-700 hover:text-rose-400 transition-colors">
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
               </div>
-            ))}
+            );})}
           </div>
         )}
       </div>

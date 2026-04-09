@@ -472,8 +472,14 @@ function GestureBindingEditor({
             ...g.actions,
             {
               id: `as-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              type: "ha_service" as const,
               entityId: "",
               service: "",
+              topic: "",
+              payload: "",
+              url: "",
+              method: "POST",
+              body: "",
               delay: 0,
             },
           ],
@@ -549,27 +555,58 @@ function GestureBindingEditor({
                 + Add action
               </button>
             </div>
-            {binding.actions.map((action, ai) => (
-              <div key={action.id} className="flex gap-2 items-start">
-                <div className="flex-1 grid grid-cols-2 gap-2">
-                  <Input
-                    placeholder="light.living_room"
-                    value={action.entityId}
-                    onChange={(e) => updateAction(binding.id, ai, "entityId", e.target.value)}
-                  />
-                  <Input
-                    placeholder="turn_on"
-                    value={action.service}
-                    onChange={(e) => updateAction(binding.id, ai, "service", e.target.value)}
-                  />
+            {binding.actions.map((action, ai) => {
+              const actionAny = action as unknown as Record<string, unknown>;
+              const atype = (actionAny.type as string) ?? "ha_service";
+              return (
+              <div key={action.id} className="flex flex-col gap-1.5 rounded-lg bg-surface p-2">
+                <div className="flex gap-2 items-center">
+                  <select
+                    value={atype}
+                    onChange={(e) => updateAction(binding.id, ai, "type", e.target.value)}
+                    className="input text-xs flex-1 py-1"
+                  >
+                    <option value="ha_service">HA Service</option>
+                    <option value="mqtt_publish">MQTT Publish</option>
+                    <option value="webhook">Webhook</option>
+                  </select>
+                  <button onClick={() => removeAction(binding.id, ai)} className="text-gray-600 hover:text-red-400">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
-                <button onClick={() => removeAction(binding.id, ai)} className="mt-2 text-gray-600 hover:text-red-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                {atype === "ha_service" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input placeholder="light.living_room" value={(actionAny.entityId as string) ?? ""} onChange={(e) => updateAction(binding.id, ai, "entityId", e.target.value)} />
+                    <Input placeholder="turn_on" value={(actionAny.service as string) ?? ""} onChange={(e) => updateAction(binding.id, ai, "service", e.target.value)} />
+                  </div>
+                )}
+                {atype === "mqtt_publish" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input placeholder="zegy/my/topic" value={(actionAny.topic as string) ?? ""} onChange={(e) => updateAction(binding.id, ai, "topic", e.target.value)} />
+                    <Input placeholder='{"state":"on"}' value={(actionAny.payload as string) ?? ""} onChange={(e) => updateAction(binding.id, ai, "payload", e.target.value)} />
+                  </div>
+                )}
+                {atype === "webhook" && (
+                  <div className="flex flex-col gap-1.5">
+                    <div className="grid grid-cols-3 gap-2">
+                      <select value={(actionAny.method as string) ?? "POST"} onChange={(e) => updateAction(binding.id, ai, "method", e.target.value)} className="input text-xs py-1">
+                        <option value="POST">POST</option>
+                        <option value="GET">GET</option>
+                        <option value="PUT">PUT</option>
+                      </select>
+                      <div className="col-span-2"><Input placeholder="https://example.com/hook" value={(actionAny.url as string) ?? ""} onChange={(e) => updateAction(binding.id, ai, "url", e.target.value)} /></div>
+                    </div>
+                    <Input placeholder="Body (optional)" value={(actionAny.body as string) ?? ""} onChange={(e) => updateAction(binding.id, ai, "body", e.target.value)} />
+                  </div>
+                )}
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={0} step={100} value={action.delay} onChange={(e) => updateAction(binding.id, ai, "delay", parseInt(e.target.value) || 0)} />
+                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">ms delay</span>
+                </div>
               </div>
-            ))}
+            );})}
           </div>
         </div>
       ))}

@@ -117,12 +117,22 @@ export default function Automations() {
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-600">
                       {z.onEnter.length > 0 && (
                         <span>
-                          Enter: {z.onEnter.map((a) => `${formatEntityName(a.entityId)} → ${a.service}`).join(", ")}
+                          Enter: {z.onEnter.map((a) => {
+                            const t = (a as { type?: string }).type ?? "ha_service";
+                            if (t === "mqtt_publish") return `MQTT → ${(a as { topic: string }).topic}`;
+                            if (t === "webhook") return `Webhook ${(a as { url: string }).url}`;
+                            return `${formatEntityName((a as { entityId: string }).entityId)} → ${(a as { service: string }).service}`;
+                          }).join(", ")}
                         </span>
                       )}
                       {z.onExit.length > 0 && (
                         <span>
-                          Exit: {z.onExit.map((a) => `${formatEntityName(a.entityId)} → ${a.service}`).join(", ")}
+                          Exit: {z.onExit.map((a) => {
+                            const t = (a as { type?: string }).type ?? "ha_service";
+                            if (t === "mqtt_publish") return `MQTT → ${(a as { topic: string }).topic}`;
+                            if (t === "webhook") return `Webhook ${(a as { url: string }).url}`;
+                            return `${formatEntityName((a as { entityId: string }).entityId)} → ${(a as { service: string }).service}`;
+                          }).join(", ")}
                         </span>
                       )}
                       {z.onEnter.length + z.onExit.length === 0 && (

@@ -15,9 +15,14 @@ type GestureType =
 
 interface GestureAction {
   id: string;
-  entityId: string;
-  service: string;
-  data?: Record<string, unknown>;
+  type?: "ha_service" | "mqtt_publish" | "webhook";
+  entityId?: string;
+  service?: string;
+  topic?: string;
+  payload?: string;
+  url?: string;
+  method?: string;
+  body?: string;
   delay: number;
 }
 
@@ -195,7 +200,7 @@ export default function Gestures() {
       setFormSensitivity(selected.sensitivity);
       setFormCooldown(selected.cooldown);
       setFormZoneId(selected.zoneId);
-      setFormActions([...selected.actions]);
+      setFormActions(selected.actions.map((a) => normalizeAction(a as unknown as Record<string, unknown>)));
     }
   }, [selected]);
 
@@ -219,7 +224,7 @@ export default function Gestures() {
         sensitivity: formSensitivity,
         cooldown: formCooldown,
         zoneId: formZoneId,
-        actions: formActions,
+        actions: serializeActions(formActions),
       });
       setBindings((prev) => [...prev, created]);
       setShowCreate(false);
@@ -243,7 +248,7 @@ export default function Gestures() {
         sensitivity: formSensitivity,
         cooldown: formCooldown,
         zoneId: formZoneId,
-        actions: formActions,
+        actions: serializeActions(formActions),
       });
       setBindings((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
     } catch {
@@ -277,8 +282,14 @@ export default function Gestures() {
     const entityId = entities[0] ?? "";
     setFormActions((prev) => [...prev, {
       id: `as-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: "ha_service",
       entityId,
       service: getServicesForEntity(entityId)[0] ?? "turn_on",
+      topic: "",
+      payload: "",
+      url: "",
+      method: "POST",
+      body: "",
       delay: 0,
     }]);
   }
@@ -301,6 +312,31 @@ export default function Gestures() {
   const allEntities = devices.flatMap((d) =>
     d.sensors.map((s) => ({ entityId: s.entityId, deviceName: d.name })),
   );
+
+  function serializeActions(actions: GestureAction[]) {
+    return actions.map((a) => {
+      const type = a.type ?? "ha_service";
+      if (type === "mqtt_publish") return { id: a.id, type, topic: a.topic, payload: a.payload, delay: a.delay };
+      if (type === "webhook") return { id: a.id, type, url: a.url, method: a.method, body: a.body || undefined, delay: a.delay };
+      return { id: a.id, type: "ha_service" as const, entityId: a.entityId ?? "", service: a.service ?? "", delay: a.delay };
+    });
+  }
+
+  function normalizeAction(a: Record<string, unknown>): GestureAction {
+    const type = (a.type as string) ?? "ha_service";
+    return {
+      id: a.id as string,
+      type: type as GestureAction["type"],
+      entityId: (a.entityId as string) ?? "",
+      service: (a.service as string) ?? "",
+      topic: (a.topic as string) ?? "",
+      payload: (a.payload as string) ?? "",
+      url: (a.url as string) ?? "",
+      method: (a.method as string) ?? "POST",
+      body: (a.body as string) ?? "",
+      delay: (a.delay as number) ?? 0,
+    };
+  }
 
   if (loading) {
     return (
@@ -361,28 +397,54 @@ export default function Gestures() {
           )}
           {formActions.map((action) => (
             <div key={action.id} className="flex flex-col gap-2 rounded-xl bg-[#0f1117] border border-white/[0.06] p-3 mb-2">
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <Select value={action.entityId} onChange={(e) => updateAction(action.id, "entityId", e.target.value)}>
+              <div className="flex gap-2 items-center">
+                <Select value={action.type ?? "ha_service"} onChange={(e) => updateAction(action.id, "type", e.target.value)}>
+                  <option value="ha_service">HA Service</option>
+                  <option value="mqtt_publish">MQTT Publish</option>
+                  <option value="webhook">Webhook</option>
+                </Select>
+                <button onClick={() => removeAction(action.id)} className="text-red-400 hover:text-red-300 px-2 text-lg">×</button>
+              </div>
+              {(action.type ?? "ha_service") === "ha_service" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Select value={action.entityId ?? ""} onChange={(e) => updateAction(action.id, "entityId", e.target.value)}>
                     {allEntities.length === 0 && <option value="">No entities available</option>}
                     {allEntities.map((e) => (
                       <option key={e.entityId} value={e.entityId}>{e.entityId}</option>
                     ))}
                   </Select>
+                  <Select value={action.service ?? ""} onChange={(e) => updateAction(action.id, "service", e.target.value)}>
+                    {getServicesForEntity(action.entityId ?? "").map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </Select>
                 </div>
-                <button onClick={() => removeAction(action.id)} className="text-red-400 hover:text-red-300 px-2 text-lg">×</button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Select value={action.service} onChange={(e) => updateAction(action.id, "service", e.target.value)}>
-                  {getServicesForEntity(action.entityId).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </Select>
-                <div className="flex items-center gap-1">
-                  <Input type="number" min={0} step={100} value={action.delay}
-                    onChange={(e) => updateAction(action.id, "delay", parseInt(e.target.value) || 0)} />
-                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">ms delay</span>
+              )}
+              {action.type === "mqtt_publish" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Input placeholder="zegy/my/topic" value={action.topic ?? ""} onChange={(e) => updateAction(action.id, "topic", e.target.value)} />
+                  <Input placeholder='{"state":"on"}' value={action.payload ?? ""} onChange={(e) => updateAction(action.id, "payload", e.target.value)} />
                 </div>
+              )}
+              {action.type === "webhook" && (
+                <div className="flex flex-col gap-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <Select value={action.method ?? "POST"} onChange={(e) => updateAction(action.id, "method", e.target.value)}>
+                      <option value="POST">POST</option>
+                      <option value="GET">GET</option>
+                      <option value="PUT">PUT</option>
+                    </Select>
+                    <div className="col-span-2">
+                      <Input placeholder="https://example.com/webhook" value={action.url ?? ""} onChange={(e) => updateAction(action.id, "url", e.target.value)} />
+                    </div>
+                  </div>
+                  <Input placeholder="Body (optional JSON)" value={action.body ?? ""} onChange={(e) => updateAction(action.id, "body", e.target.value)} />
+                </div>
+              )}
+              <div className="flex items-center gap-1">
+                <Input type="number" min={0} step={100} value={action.delay}
+                  onChange={(e) => updateAction(action.id, "delay", parseInt(e.target.value) || 0)} />
+                <span className="text-[10px] text-zinc-500 whitespace-nowrap">ms delay</span>
               </div>
             </div>
           ))}

@@ -468,3 +468,8 @@ export function publishNodeConfig(nodeId: string, payload: Record<string, unknow
   if (!client) return;
   client.publish(`zegy/${nodeId}/config`, JSON.stringify(payload), { qos: 1 });
 }
+
+export function mqttPublish(topic: string, payload: string): void {
+  if (!client) return;
+  client.publish(topic, payload);
+}
