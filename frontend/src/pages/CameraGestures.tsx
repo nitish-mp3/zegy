@@ -72,6 +72,49 @@ function Select({
   );
 }
 
+async function consumeMjpegStream(
+  body: ReadableStream<Uint8Array>,
+  onFrame: (bmp: ImageBitmap) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const reader = body.getReader();
+  let buf = new Uint8Array(0);
+  const append = (chunk: Uint8Array) => {
+    const next = new Uint8Array(buf.length + chunk.length);
+    next.set(buf);
+    next.set(chunk, buf.length);
+    buf = next;
+  };
+  try {
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      append(value);
+      while (true) {
+        let soi = -1;
+        for (let i = 0; i < buf.length - 1; i++) {
+          if (buf[i] === 0xff && buf[i + 1] === 0xd8) { soi = i; break; }
+        }
+        if (soi === -1) { buf = new Uint8Array(0); break; }
+        if (soi > 0) buf = buf.slice(soi);
+        let eoi = -1;
+        for (let i = 2; i < buf.length - 1; i++) {
+          if (buf[i] === 0xff && buf[i + 1] === 0xd9) { eoi = i + 2; break; }
+        }
+        if (eoi === -1) break;
+        const jpeg = buf.slice(0, eoi);
+        buf = buf.slice(eoi);
+        try {
+          const bmp = await createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }));
+          onFrame(bmp);
+        } catch { /* skip corrupt frame */ }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function GestureIcon({ gesture, size = 24 }: { gesture: CameraGestureType; size?: number }) {
   const def = CAMERA_GESTURE_DEFS[gesture];
   if (!def) return null;
@@ -587,9 +630,7 @@ function CalibrationModal({
   onClose: () => void;
   onComplete: (palmFeatures: number[][], fistFeatures: number[][]) => void;
 }) {
-  const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef(0);
   const [step, setStep] = useState<"idle" | "palm" | "fist" | "done">("idle");
   const [samples, setSamples] = useState<{ palm: number[][]; fist: number[][] }>({ palm: [], fist: [] });
@@ -600,36 +641,33 @@ function CalibrationModal({
   const streamUrl = camera ? api.getCameraStreamUrl(camera.id) : "";
 
   useEffect(() => {
-    if (!open || !camera || !imgRef.current) return;
-    offscreenRef.current = document.createElement("canvas");
-    const img = imgRef.current;
-    img.crossOrigin = "anonymous";
-    img.src = streamUrl;
+    if (!open || !camera) return;
+    const ac = new AbortController();
+
+    (async () => {
+      try {
+        const res = await fetch(streamUrl, { signal: ac.signal });
+        if (!res.ok || !res.body) return;
+        await consumeMjpegStream(res.body, (bmp) => {
+          const canvas = canvasRef.current;
+          if (!canvas) { bmp.close(); return; }
+          if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+            canvas.width = bmp.width;
+            canvas.height = bmp.height;
+          }
+          const ctx = canvas.getContext("2d");
+          if (ctx) ctx.drawImage(bmp, 0, 0);
+          bmp.close();
+        }, ac.signal);
+      } catch { /* AbortError or network error */ }
+    })();
+
     return () => {
-      img.src = "";
+      ac.abort();
       if (sampleIntervalRef.current) clearInterval(sampleIntervalRef.current);
       cancelAnimationFrame(rafRef.current);
     };
   }, [open, camera, streamUrl]);
-
-  useEffect(() => {
-    if (!open || !canvasRef.current || !imgRef.current) return;
-    const img = imgRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const draw = () => {
-      if (img.naturalWidth > 0) {
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        try { ctx.drawImage(img, 0, 0); } catch { /* cross-origin guard */ }
-      }
-      rafRef.current = requestAnimationFrame(draw);
-    };
-    rafRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [open]);
 
   const startCapture = useCallback(
     (gesture: "palm" | "fist") => {
@@ -645,15 +683,9 @@ function CalibrationModal({
           clearInterval(timer);
           let captured = 0;
           sampleIntervalRef.current = setInterval(() => {
-            const img = imgRef.current;
-            const offscreen = offscreenRef.current;
-            if (!img || img.naturalWidth === 0 || !offscreen) return;
-            offscreen.width = img.naturalWidth;
-            offscreen.height = img.naturalHeight;
-            const offCtx = offscreen.getContext("2d");
-            if (!offCtx) return;
-            try { offCtx.drawImage(img, 0, 0); } catch { return; }
-            const features = captureFeatures(offscreen, performance.now());
+            const canvas = canvasRef.current;
+            if (!canvas || canvas.width === 0) return;
+            const features = captureFeatures(canvas, performance.now());
             if (features) {
               setSamples((prev) => ({ ...prev, [gesture]: [...prev[gesture], features] }));
               captured++;
@@ -684,7 +716,6 @@ function CalibrationModal({
         <h3 className="section-title mb-4">Calibrate — {camera.name}</h3>
 
         <div className="relative aspect-video bg-black rounded-xl overflow-hidden mb-4">
-          <img ref={imgRef} className="hidden" alt="" />
           <canvas ref={canvasRef} className="w-full h-full object-contain" />
           {countdown > 0 && (
             <div className="absolute inset-0 flex items-center justify-center">
@@ -737,10 +768,8 @@ function LivePreview({
   camera: CameraConfig;
   onGestureDetected: (gesture: CameraGestureType) => void;
 }) {
-  const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
-  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef(0);
   const lastGestureRef = useRef<{ gesture: CameraGestureType; since: number } | null>(null);
   const cooldownUntilRef = useRef(0);
@@ -751,83 +780,55 @@ function LivePreview({
   const streamUrl = api.getCameraStreamUrl(camera.id);
 
   useEffect(() => {
-    if (!imgRef.current) return;
-    offscreenRef.current = document.createElement("canvas");
-    const img = imgRef.current;
-    let errorTimer: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
+    const ac = new AbortController();
+    setStreamState("loading");
+    setCurrentDetection({ gesture: null, confidence: 0 });
+    let gotFrame = false;
 
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      if (cancelled) return;
-      if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
-      setStreamState("live");
-    };
-    img.onerror = () => {
-      if (cancelled) return;
-      // For RTSP streams, the backend sends 200 immediately then data arrives
-      // a few seconds later. The browser fires onerror on the empty initial
-      // response. Retry after a short delay instead of showing an error.
-      if (errorTimer) clearTimeout(errorTimer);
-      errorTimer = setTimeout(() => {
-        if (cancelled) return;
-        // Check if we actually got live frames (canvas has content) before erroring
-        const offscreen = offscreenRef.current;
-        if (offscreen && offscreen.width > 0) {
-          setStreamState("live");
-          return;
-        }
-        setStreamState("error");
-      }, 8000);
-    };
-    img.src = streamUrl;
+    (async () => {
+      try {
+        const res = await fetch(streamUrl, { signal: ac.signal });
+        if (!res.ok || !res.body) { setStreamState("error"); return; }
+        await consumeMjpegStream(res.body, (bmp) => {
+          if (!gotFrame) { gotFrame = true; setStreamState("live"); }
+          const canvas = canvasRef.current;
+          if (!canvas) { bmp.close(); return; }
+          if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+            canvas.width = bmp.width;
+            canvas.height = bmp.height;
+            const ov = overlayRef.current;
+            if (ov) { ov.width = bmp.width; ov.height = bmp.height; }
+          }
+          const ctx = canvas.getContext("2d");
+          if (ctx) ctx.drawImage(bmp, 0, 0);
+          bmp.close();
+        }, ac.signal);
+        if (!gotFrame) setStreamState("error");
+      } catch (e: unknown) {
+        if ((e as { name?: string }).name !== "AbortError") setStreamState("error");
+      }
+    })();
 
-    return () => {
-      cancelled = true;
-      if (errorTimer) clearTimeout(errorTimer);
-      img.src = "";
-      img.onload = null;
-      img.onerror = null;
-      setStreamState("loading");
-      setCurrentDetection({ gesture: null, confidence: 0 });
-    };
+    return () => { ac.abort(); setStreamState("loading"); };
   }, [streamUrl]);
 
   useEffect(() => {
-    if (!ready || !imgRef.current || !canvasRef.current || !overlayRef.current) return;
-    const img = imgRef.current;
+    if (!ready || streamState !== "live" || !canvasRef.current || !overlayRef.current) return;
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
-    const ctx = canvas.getContext("2d");
     const octx = overlay.getContext("2d");
-    if (!ctx || !octx) return;
+    if (!octx) return;
 
     const activeBindings = camera.gestures.filter((g) => g.enabled);
     const holdTimes = Object.fromEntries(activeBindings.map((g) => [g.gesture, g.holdTime]));
     const cooldowns = Object.fromEntries(activeBindings.map((g) => [g.gesture, g.cooldown]));
 
     const loop = () => {
-      const offscreen = offscreenRef.current;
-      if (img.naturalWidth > 0 && offscreen) {
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width = w; canvas.height = h;
-          overlay.width = w; overlay.height = h;
-          offscreen.width = w; offscreen.height = h;
-        }
-        const offCtx = offscreen.getContext("2d");
-        try {
-          ctx.drawImage(img, 0, 0);
-          if (offCtx) offCtx.drawImage(img, 0, 0);
-        } catch {
-          rafRef.current = requestAnimationFrame(loop);
-          return;
-        }
-
-        const result = detectFromVideo(offscreen, performance.now());
+      if (canvas.width > 0) {
+        const w = canvas.width, h = canvas.height;
+        if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; }
+        const result = detectFromVideo(canvas, performance.now());
         octx.clearRect(0, 0, w, h);
-
         if (result.landmarks) {
           octx.fillStyle = "#14b8a6";
           for (const lm of result.landmarks) {
@@ -836,15 +837,12 @@ function LivePreview({
             octx.fill();
           }
         }
-
         const now = performance.now();
         setCurrentDetection({ gesture: result.gesture, confidence: result.confidence });
-
         if (result.gesture && result.confidence > 0.55 && now > cooldownUntilRef.current) {
-          if (lastGestureRef.current && lastGestureRef.current.gesture === result.gesture) {
+          if (lastGestureRef.current?.gesture === result.gesture) {
             const held = now - lastGestureRef.current.since;
-            const requiredHold = holdTimes[result.gesture] ?? 800;
-            if (held >= requiredHold) {
+            if (held >= (holdTimes[result.gesture] ?? 800)) {
               onGestureDetected(result.gesture);
               cooldownUntilRef.current = now + (cooldowns[result.gesture] ?? 3000);
               lastGestureRef.current = null;
@@ -858,14 +856,12 @@ function LivePreview({
       }
       rafRef.current = requestAnimationFrame(loop);
     };
-
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [ready, camera.gestures, detectFromVideo, onGestureDetected]);
+  }, [ready, streamState, camera.gestures, detectFromVideo, onGestureDetected]);
 
   return (
     <div className="relative aspect-video bg-black rounded-xl overflow-hidden">
-      <img ref={imgRef} className="hidden" alt="" />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain" />
       <canvas ref={overlayRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
 
@@ -886,8 +882,7 @@ function LivePreview({
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-5 gap-3 text-center">
           <p className="text-red-400 text-sm">Stream unavailable</p>
           <p className="text-xs text-gray-500 max-w-xs">
-            Camera may be offline, the URL is wrong, or credentials failed.
-            Supports HTTP MJPEG and RTSP (requires FFmpeg on the host).
+            Camera may be offline, the URL is wrong, or credentials failed. Supports HTTP MJPEG and RTSP.
           </p>
         </div>
       )}
