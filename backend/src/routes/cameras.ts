@@ -6,6 +6,8 @@ import ffmpegBin from "ffmpeg-static";
 import { loadJson, saveJson } from "../store";
 import { executeActions } from "../actions";
 import { logger } from "../logger";
+import { config } from "../config";
+import { getStates } from "../ha/client";
 import type {
   CameraConfig,
   CameraGroup,
@@ -50,18 +52,41 @@ function genId(prefix: string): string {
 
 function validateActions(arr: unknown): ActionStep[] {
   if (!Array.isArray(arr)) return [];
-  return arr
-    .filter(
-      (a: Record<string, unknown>) =>
-        typeof a.entityId === "string" && typeof a.service === "string",
-    )
-    .map((a: Record<string, unknown>) => ({
-      id: typeof a.id === "string" ? a.id : genId("as"),
-      entityId: a.entityId as string,
-      service: a.service as string,
-      data: typeof a.data === "object" && a.data !== null ? (a.data as Record<string, unknown>) : undefined,
-      delay: typeof a.delay === "number" ? Math.max(0, a.delay) : 0,
-    }));
+  return (arr as Record<string, unknown>[])
+    .map((a): ActionStep | null => {
+      if (typeof a !== "object" || a === null) return null;
+      const type = typeof a.type === "string" ? a.type : "ha_service";
+      const delay = typeof a.delay === "number" ? Math.max(0, a.delay) : 0;
+      const id = typeof a.id === "string" ? a.id : genId("as");
+      if (type === "mqtt_publish") {
+        if (typeof a.topic !== "string") return null;
+        return { id, type: "mqtt_publish", topic: a.topic, payload: typeof a.payload === "string" ? a.payload : "", delay };
+      }
+      if (type === "webhook") {
+        if (typeof a.url !== "string" || !a.url) return null;
+        const headers =
+          typeof a.headers === "object" && a.headers !== null && !Array.isArray(a.headers)
+            ? (a.headers as Record<string, string>)
+            : undefined;
+        return {
+          id,
+          type: "webhook",
+          url: a.url,
+          method: typeof a.method === "string" ? a.method : "POST",
+          body: typeof a.body === "string" ? a.body : undefined,
+          headers,
+          delay,
+        };
+      }
+      return {
+        id,
+        entityId: typeof a.entityId === "string" ? a.entityId : "",
+        service: typeof a.service === "string" ? a.service : "",
+        data: typeof a.data === "object" && a.data !== null ? (a.data as Record<string, unknown>) : undefined,
+        delay,
+      };
+    })
+    .filter((a): a is ActionStep => a !== null);
 }
 
 const VALID_GESTURE_TYPES: CameraGestureType[] = ["palm", "fist", "point", "thumbs_up"];
@@ -264,6 +289,50 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
 
     if (!camera.url) return reply.status(400).send({ error: "No URL configured" });
 
+    if (/^ha:\/\//i.test(camera.url)) {
+      const entityId = camera.url.slice("ha://".length);
+      const haBase = config.isAddon ? "http://supervisor/core" : config.ha.supervisorUrl;
+      const streamUrl = `${haBase}/api/camera_proxy_stream/${encodeURIComponent(entityId)}`;
+      const controller = new AbortController();
+      const onReqClose = () => controller.abort();
+      req.raw.on("close", onReqClose);
+
+      try {
+        const upstream = await fetch(streamUrl, {
+          headers: {
+            Authorization: `Bearer ${config.ha.supervisorToken}`,
+          },
+          signal: controller.signal,
+        });
+
+        if (!upstream.ok || !upstream.body) {
+          req.raw.off("close", onReqClose);
+          return reply.status(502).send({ error: "HA camera stream unavailable" });
+        }
+
+        const contentType = upstream.headers.get("content-type") || "multipart/x-mixed-replace; boundary=frame";
+        reply.raw.writeHead(200, {
+          "Content-Type": contentType,
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "Access-Control-Allow-Origin": "*",
+        });
+
+        const readable = Readable.fromWeb(upstream.body as never);
+        readable.pipe(reply.raw);
+        req.raw.on("close", () => readable.destroy());
+      } catch (err) {
+        req.raw.off("close", onReqClose);
+        if ((err as { name?: string }).name !== "AbortError") {
+          logger.debug({ err, cameraId: camera.id }, "HA camera stream failed");
+        }
+        if (!reply.raw.headersSent) {
+          return reply.status(502).send({ error: "HA camera stream unavailable" });
+        }
+      }
+      return reply;
+    }
+
     if (/^rtsp:\/\//i.test(camera.url)) {
       const embedMatch = camera.url.match(/^rtsp:\/\/([^:@]+):([^@]*)@(.+)$/i);
       const baseRtsp = embedMatch ? `rtsp://${embedMatch[3]}` : camera.url;
@@ -422,6 +491,23 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
     if (changed) saveCameras(cameras);
 
     return reply.send({ ok: true });
+  });
+
+  app.get("/api/ha/cameras", async (_req, reply) => {
+    try {
+      const states = await getStates();
+      const cameras = states
+        .filter((s) => s.entity_id.startsWith("camera."))
+        .map((s) => ({
+          entityId: s.entity_id,
+          name: (s.attributes.friendly_name as string | undefined) ?? s.entity_id,
+          state: s.state,
+        }));
+      return reply.send(cameras);
+    } catch (err) {
+      logger.warn({ err }, "Failed to fetch HA camera entities");
+      return reply.status(503).send({ error: "HA not available" });
+    }
   });
 
   app.get("/api/cameras/discover", async (req, reply) => {

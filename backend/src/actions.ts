@@ -12,9 +12,13 @@ export async function executeActions(actions: ActionStep[]): Promise<void> {
     try {
       if (type === "ha_service") {
         const a = action as Extract<ActionStep, { type?: "ha_service" }>;
-        const domain = a.entityId.split(".")[0];
-        await callService(domain, a.service, { entity_id: a.entityId, ...a.data });
-        logger.info({ entityId: a.entityId, service: a.service }, "Action executed: ha_service");
+        if (!a.entityId || !a.service) {
+          logger.warn({ entityId: a.entityId, service: a.service }, "Skipping ha_service action: missing entityId or service");
+        } else {
+          const domain = a.entityId.split(".")[0];
+          await callService(domain, a.service, { entity_id: a.entityId, ...a.data });
+          logger.info({ entityId: a.entityId, service: a.service }, "Action executed: ha_service");
+        }
       } else if (type === "mqtt_publish") {
         const a = action as Extract<ActionStep, { type: "mqtt_publish" }>;
         mqttPublish(a.topic, a.payload);

@@ -133,7 +133,7 @@ function AddCameraModal({
   onClose: () => void;
   onSave: (data: { name: string; url: string; snapshotUrl: string; username: string; password: string; groupId: string | null }) => void;
 }) {
-  const [tab, setTab] = useState<"manual" | "discover">("discover");
+  const [tab, setTab] = useState<"manual" | "discover" | "ha">("discover");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [snapshotUrl, setSnapshotUrl] = useState("");
@@ -145,6 +145,10 @@ function AddCameraModal({
   const [scanDone, setScanDone] = useState(false);
   const [scanSubnets, setScanSubnets] = useState<string[]>([]);
   const [selectedDiscovered, setSelectedDiscovered] = useState<string | null>(null);
+  const [haCameras, setHaCameras] = useState<{ entityId: string; name: string; state: string }[]>([]);
+  const [haCamerasLoading, setHaCamerasLoading] = useState(false);
+  const [haCamerasError, setHaCamerasError] = useState<string | null>(null);
+  const [selectedHaEntityId, setSelectedHaEntityId] = useState<string | null>(null);
 
   if (!open) return null;
 
@@ -167,6 +171,7 @@ function AddCameraModal({
   };
 
   const urlProtocol = (() => {
+    if (/^ha:\/\//i.test(url)) return "HA";
     if (/^rtsp:\/\//i.test(url)) return "RTSP";
     if (/^https:\/\//i.test(url)) return "HTTPS";
     if (/^http:\/\//i.test(url)) return "HTTP";
@@ -182,6 +187,7 @@ function AddCameraModal({
   const resetForm = () => {
     setName(""); setUrl(""); setSnapshotUrl(""); setUsername(""); setPassword(""); setGroupId("");
     setDiscovered([]); setScanDone(false); setSelectedDiscovered(null);
+    setHaCameras([]); setHaCamerasError(null); setSelectedHaEntityId(null);
   };
 
   const handleClose = () => { resetForm(); onClose(); };
@@ -210,6 +216,29 @@ function AddCameraModal({
     setTab("manual");
   };
 
+  const loadHaCameras = async () => {
+    setHaCamerasLoading(true);
+    setHaCamerasError(null);
+    try {
+      const cams = await api.getHaCameras();
+      setHaCameras(cams);
+    } catch {
+      setHaCamerasError("Could not reach Home Assistant. Check your HA connection in Settings.");
+    } finally {
+      setHaCamerasLoading(false);
+    }
+  };
+
+  const selectHaCamera = (cam: { entityId: string; name: string }) => {
+    setSelectedHaEntityId(cam.entityId);
+    setName(cam.name);
+    setUrl(`ha://${cam.entityId}`);
+    setSnapshotUrl("");
+    setUsername("");
+    setPassword("");
+    setTab("manual");
+  };
+
   const canSave = name.trim() && url.trim();
 
   return (
@@ -227,6 +256,17 @@ function AddCameraModal({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
               </svg>
               Auto Discover
+            </span>
+          </button>
+          <button
+            onClick={() => { setTab("ha"); if (haCameras.length === 0 && !haCamerasLoading) loadHaCameras(); }}
+            className={`flex-1 px-4 py-3.5 text-sm font-medium transition-colors ${tab === "ha" ? "text-zegy-400 border-b-2 border-zegy-500" : "text-gray-500 hover:text-gray-300"}`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+              </svg>
+              From HA
             </span>
           </button>
           <button
@@ -345,6 +385,68 @@ function AddCameraModal({
             </div>
           )}
 
+          {tab === "ha" && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-gray-400">Cameras registered in Home Assistant</p>
+                <button onClick={loadHaCameras} disabled={haCamerasLoading} className="text-xs text-zegy-400 hover:text-zegy-300 flex items-center gap-1 disabled:opacity-50">
+                  <svg className={`h-3.5 w-3.5 ${haCamerasLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  Refresh
+                </button>
+              </div>
+
+              {haCamerasLoading && (
+                <div className="text-center py-8">
+                  <div className="h-5 w-5 border-2 border-zegy-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  <p className="text-xs text-gray-500">Loading cameras from Home Assistant...</p>
+                </div>
+              )}
+
+              {haCamerasError && (
+                <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-4 text-center">
+                  <p className="text-xs text-red-400">{haCamerasError}</p>
+                </div>
+              )}
+
+              {!haCamerasLoading && !haCamerasError && haCameras.length === 0 && (
+                <div className="bg-surface-overlay rounded-xl p-5 text-center">
+                  <p className="text-xs text-gray-500">No camera entities found in Home Assistant.</p>
+                </div>
+              )}
+
+              {!haCamerasLoading && haCameras.length > 0 && (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {haCameras.map((cam) => {
+                    const isSelected = selectedHaEntityId === cam.entityId;
+                    const isLive = cam.state === "idle" || cam.state === "streaming";
+                    return (
+                      <button
+                        key={cam.entityId}
+                        onClick={() => selectHaCamera(cam)}
+                        className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${isSelected ? "bg-zegy-600/20 ring-1 ring-zegy-500/40" : "bg-surface-overlay hover:bg-white/[0.05]"}`}
+                      >
+                        <div className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-zegy-600/15">
+                          <svg className="h-4 w-4 text-zegy-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-200 truncate">{cam.name}</p>
+                          <p className="text-xs text-gray-500 truncate">{cam.entityId}</p>
+                        </div>
+                        <span className={`badge text-[10px] shrink-0 ${isLive ? "bg-green-600/20 text-green-400" : "bg-gray-700 text-gray-400"}`}>
+                          {cam.state}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {tab === "manual" && (
             <div className="space-y-3">
               {selectedDiscovered && (
@@ -353,6 +455,14 @@ function AddCameraModal({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                   </svg>
                   <span className="text-xs text-green-300">Pre-filled from discovered camera. Review and confirm details.</span>
+                </div>
+              )}
+              {selectedHaEntityId && (
+                <div className="flex items-center gap-2 bg-zegy-600/10 border border-zegy-500/20 rounded-xl px-3 py-2.5 mb-1">
+                  <svg className="h-4 w-4 text-zegy-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+                  </svg>
+                  <span className="text-xs text-zegy-300">From Home Assistant. Streamed via HA — no credentials needed.</span>
                 </div>
               )}
               <div>
@@ -364,6 +474,7 @@ function AddCameraModal({
                   <Label>Stream URL</Label>
                   {urlProtocol && (
                     <span className={`badge text-[10px] ${
+                      urlProtocol === "HA" ? "bg-zegy-600/20 text-zegy-300" :
                       urlProtocol === "RTSP" ? "bg-purple-600/20 text-purple-300" : "bg-blue-600/20 text-blue-300"
                     }`}>{urlProtocol}</span>
                   )}
@@ -381,16 +492,18 @@ function AddCameraModal({
                 <Label>Snapshot URL (optional)</Label>
                 <Input value={snapshotUrl} onChange={(e) => setSnapshotUrl(e.target.value)} placeholder="http://192.168.1.100/snapshot.jpg" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Username</Label>
-                  <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoComplete="off" />
+              {!selectedHaEntityId && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Username</Label>
+                    <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoComplete="off" />
+                  </div>
+                  <div>
+                    <Label>Password</Label>
+                    <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+                  </div>
                 </div>
-                <div>
-                  <Label>Password</Label>
-                  <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-                </div>
-              </div>
+              )}
               {groups.length > 0 && (
                 <div>
                   <Label>Group</Label>
@@ -860,36 +973,42 @@ function LivePreview({
     const holdTimes = Object.fromEntries(activeBindings.map((g) => [g.gesture, g.holdTime]));
     const cooldowns = Object.fromEntries(activeBindings.map((g) => [g.gesture, g.cooldown]));
 
+    let lastDetect = 0;
+    const DETECT_INTERVAL = 100;
+
     const loop = () => {
-      if (canvas.width > 0) {
+      const now = performance.now();
+      if (canvas.width > 0 && now - lastDetect >= DETECT_INTERVAL) {
+        lastDetect = now;
         const w = canvas.width, h = canvas.height;
         if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; }
-        const result = detectFromVideo(canvas, performance.now());
-        octx.clearRect(0, 0, w, h);
-        if (result.landmarks) {
-          octx.fillStyle = "#14b8a6";
-          for (const lm of result.landmarks) {
-            octx.beginPath();
-            octx.arc(lm.x * w, lm.y * h, 3, 0, Math.PI * 2);
-            octx.fill();
-          }
-        }
-        const now = performance.now();
-        setCurrentDetection({ gesture: result.gesture, confidence: result.confidence });
-        if (result.gesture && result.confidence > 0.55 && now > cooldownUntilRef.current) {
-          if (lastGestureRef.current?.gesture === result.gesture) {
-            const held = now - lastGestureRef.current.since;
-            if (held >= (holdTimes[result.gesture] ?? 800)) {
-              onGestureDetected(result.gesture);
-              cooldownUntilRef.current = now + (cooldowns[result.gesture] ?? 3000);
-              lastGestureRef.current = null;
+        try {
+          const result = detectFromVideo(canvas, now);
+          octx.clearRect(0, 0, w, h);
+          if (result.landmarks) {
+            octx.fillStyle = "#14b8a6";
+            for (const lm of result.landmarks) {
+              octx.beginPath();
+              octx.arc(lm.x * w, lm.y * h, 3, 0, Math.PI * 2);
+              octx.fill();
             }
-          } else {
-            lastGestureRef.current = { gesture: result.gesture, since: now };
           }
-        } else if (!result.gesture) {
-          lastGestureRef.current = null;
-        }
+          setCurrentDetection({ gesture: result.gesture, confidence: result.confidence });
+          if (result.gesture && result.confidence > 0.55 && now > cooldownUntilRef.current) {
+            if (lastGestureRef.current?.gesture === result.gesture) {
+              const held = now - lastGestureRef.current.since;
+              if (held >= (holdTimes[result.gesture] ?? 800)) {
+                onGestureDetected(result.gesture);
+                cooldownUntilRef.current = now + (cooldowns[result.gesture] ?? 3000);
+                lastGestureRef.current = null;
+              }
+            } else {
+              lastGestureRef.current = { gesture: result.gesture, since: now };
+            }
+          } else if (!result.gesture) {
+            lastGestureRef.current = null;
+          }
+        } catch { /* skip frame on detection error */ }
       }
       rafRef.current = requestAnimationFrame(loop);
     };

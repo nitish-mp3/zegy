@@ -222,6 +222,9 @@ export const api = {
     request<{ found: DiscoveredCamera[]; subnets: string[] }>(
       `/api/cameras/discover${subnet ? `?subnet=${encodeURIComponent(subnet)}` : ""}`,
     ),
+
+  getHaCameras: () =>
+    request<{ entityId: string; name: string; state: string }[]>("/api/ha/cameras"),
 };
 
 export { BASE };
