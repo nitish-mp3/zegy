@@ -292,44 +292,44 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
     if (/^ha:\/\//i.test(camera.url)) {
       const entityId = camera.url.slice("ha://".length);
       const haBase = config.isAddon ? "http://supervisor/core" : config.ha.supervisorUrl;
-      const streamUrl = `${haBase}/api/camera_proxy_stream/${encodeURIComponent(entityId)}`;
-      const controller = new AbortController();
-      const onReqClose = () => controller.abort();
-      req.raw.on("close", onReqClose);
+      const snapshotUrl = `${haBase}/api/camera_proxy/${encodeURIComponent(entityId)}`;
 
-      try {
-        const upstream = await fetch(streamUrl, {
-          headers: {
-            Authorization: `Bearer ${config.ha.supervisorToken}`,
-          },
-          signal: controller.signal,
-        });
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "Content-Type": "multipart/x-mixed-replace; boundary=zegycam",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Access-Control-Allow-Origin": "*",
+      });
 
-        if (!upstream.ok || !upstream.body) {
-          req.raw.off("close", onReqClose);
-          return reply.status(502).send({ error: "HA camera stream unavailable" });
+      let closed = false;
+      req.raw.on("close", () => { closed = true; });
+
+      (async () => {
+        while (!closed && !reply.raw.destroyed) {
+          try {
+            const snap = await fetch(snapshotUrl, {
+              headers: { Authorization: `Bearer ${config.ha.supervisorToken}` },
+              signal: AbortSignal.timeout(4000),
+            });
+            if (snap.ok && snap.body) {
+              const buf = Buffer.from(await snap.arrayBuffer());
+              if (!reply.raw.destroyed) {
+                reply.raw.write(`--zegycam\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`);
+                reply.raw.write(buf);
+                reply.raw.write("\r\n");
+              }
+            }
+          } catch (err) {
+            if ((err as { name?: string }).name !== "AbortError") {
+              logger.debug({ err, cameraId: camera.id }, "HA camera snapshot failed");
+            }
+          }
+          await new Promise<void>((r) => setTimeout(r, 200));
         }
+        if (!reply.raw.destroyed) reply.raw.end();
+      })().catch(() => { if (!reply.raw.destroyed) reply.raw.end(); });
 
-        const contentType = upstream.headers.get("content-type") || "multipart/x-mixed-replace; boundary=frame";
-        reply.raw.writeHead(200, {
-          "Content-Type": contentType,
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          "Pragma": "no-cache",
-          "Access-Control-Allow-Origin": "*",
-        });
-
-        const readable = Readable.fromWeb(upstream.body as never);
-        readable.pipe(reply.raw);
-        req.raw.on("close", () => readable.destroy());
-      } catch (err) {
-        req.raw.off("close", onReqClose);
-        if ((err as { name?: string }).name !== "AbortError") {
-          logger.debug({ err, cameraId: camera.id }, "HA camera stream failed");
-        }
-        if (!reply.raw.headersSent) {
-          return reply.status(502).send({ error: "HA camera stream unavailable" });
-        }
-      }
       return reply;
     }
 
