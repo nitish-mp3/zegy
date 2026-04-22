@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppProvider } from "./contexts/AppContext";
 import { useCameras } from "./hooks/useCameras";
-import { api } from "./api/client";
 import GestureDetector from "./components/GestureDetector";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
@@ -21,7 +20,6 @@ function GestureManager() {
         <GestureDetector
           key={cam.id}
           camera={cam}
-          onGestureDetected={(gesture) => api.triggerCameraGesture(cam.id, gesture).catch(() => {})}
         />
       ))}
     </>

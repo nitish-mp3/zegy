@@ -4,6 +4,14 @@ import type { CameraConfig, CameraGroup, CameraGestureBinding, CameraGestureType
 
 export type { CameraConfig, CameraGroup, CameraGestureBinding };
 
+const CAMERAS_SYNC_EVENT = "zegy:cameras-sync";
+
+function emitCamerasSync() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(CAMERAS_SYNC_EVENT));
+  }
+}
+
 export function useCameras() {
   const [cameras, setCameras] = useState<CameraConfig[]>([]);
   const [groups, setGroups] = useState<CameraGroup[]>([]);
@@ -26,12 +34,26 @@ export function useCameras() {
 
   useEffect(() => {
     refresh();
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const onSync = () => {
+      refresh();
+    };
+
+    window.addEventListener(CAMERAS_SYNC_EVENT, onSync);
+    return () => {
+      window.removeEventListener(CAMERAS_SYNC_EVENT, onSync);
+    };
   }, [refresh]);
 
   const createCamera = useCallback(
     async (data: { name: string; url: string; snapshotUrl?: string; username?: string; password?: string; groupId?: string | null }) => {
       const created = await api.createCamera(data);
       setCameras((prev) => [...prev, created]);
+      emitCamerasSync();
       return created;
     },
     [],
@@ -41,6 +63,7 @@ export function useCameras() {
     async (id: string, data: Partial<CameraConfig>) => {
       const updated = await api.updateCamera(id, data);
       setCameras((prev) => prev.map((c) => (c.id === id ? updated : c)));
+      emitCamerasSync();
       return updated;
     },
     [],
@@ -49,6 +72,7 @@ export function useCameras() {
   const removeCamera = useCallback(async (id: string) => {
     await api.deleteCamera(id);
     setCameras((prev) => prev.filter((c) => c.id !== id));
+    emitCamerasSync();
   }, []);
 
   const calibrate = useCallback(
@@ -57,6 +81,7 @@ export function useCameras() {
       setCameras((prev) =>
         prev.map((c) => (c.id === id ? { ...c, calibration: res.calibration } : c)),
       );
+      emitCamerasSync();
       return res.calibration;
     },
     [],
@@ -73,6 +98,7 @@ export function useCameras() {
     async (data: { name: string; gestures?: CameraGestureBinding[] }) => {
       const created = await api.createCameraGroup(data);
       setGroups((prev) => [...prev, created]);
+      emitCamerasSync();
       return created;
     },
     [],
@@ -82,6 +108,7 @@ export function useCameras() {
     async (id: string, data: Partial<CameraGroup>) => {
       const updated = await api.updateCameraGroup(id, data);
       setGroups((prev) => prev.map((g) => (g.id === id ? updated : g)));
+      emitCamerasSync();
       return updated;
     },
     [],
@@ -93,6 +120,7 @@ export function useCameras() {
     setCameras((prev) =>
       prev.map((c) => (c.groupId === id ? { ...c, groupId: null } : c)),
     );
+    emitCamerasSync();
   }, []);
 
   return {
