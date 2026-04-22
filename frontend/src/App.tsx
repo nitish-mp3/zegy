@@ -1,5 +1,8 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppProvider } from "./contexts/AppContext";
+import { useCameras } from "./hooks/useCameras";
+import { api } from "./api/client";
+import GestureDetector from "./components/GestureDetector";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Devices from "./pages/Devices";
@@ -10,9 +13,25 @@ import Settings from "./pages/Settings";
 import Gestures from "./pages/Gestures";
 import CameraGestures from "./pages/CameraGestures";
 
+function GestureManager() {
+  const { cameras } = useCameras();
+  return (
+    <>
+      {cameras.filter(c => c.enabled && c.gestures.some(g => g.enabled)).map(cam => (
+        <GestureDetector
+          key={cam.id}
+          camera={cam}
+          onGestureDetected={(gesture) => api.triggerCameraGesture(cam.id, gesture).catch(() => {})}
+        />
+      ))}
+    </>
+  );
+}
+
 export default function App() {
   return (
     <AppProvider>
+      <GestureManager />
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
