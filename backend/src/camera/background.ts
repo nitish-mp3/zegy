@@ -27,7 +27,23 @@ Object.defineProperty(mockDocument, "getElementById", { writable: false });
 Object.defineProperty(globalThis, "document", { value: mockDocument });
 Object.defineProperty(globalThis, "window", { value: globalThis });
 Object.defineProperty(globalThis, "navigator", { value: { userAgent: "node" } });
-Object.defineProperty(globalThis, "performance", { value: { now: () => Date.now() } });
+Object.defineProperty(globalThis, "performance", {
+  value: Object.assign(Object.create(null), {
+    now: () => Date.now(),
+    timeOrigin: Date.now(),
+    timing: { navigationStart: Date.now() },
+    navigation: { type: 0, redirectCount: 0 },
+    clearMarks: () => {},
+    clearMeasures: () => {},
+    clearResourceTimings: () => {},
+    getEntries: () => [],
+    getEntriesByName: () => [],
+    getEntriesByType: () => [],
+    mark: () => {},
+    measure: () => {},
+    setResourceTimingBufferSize: () => {},
+  }),
+});
 
 const mediapipe = require("@mediapipe/tasks-vision");
 const FilesetResolver = mediapipe.FilesetResolver;
