@@ -54,10 +54,21 @@ async function getLandmarker(): Promise<HandLandmarker> {
     const modelDir = path.join(process.cwd(), "node_modules", "@mediapipe", "tasks-vision");
     const modelPath = path.join(modelDir, "mediapipe", "hand_landmarker.task");
 
-    logger.info({ wasmUrl, modelPath }, "Loading MediaPipe hand landmarker for background camera gestures");
+    let modelBuffer: Uint8Array;
+    if (fs.existsSync(modelPath)) {
+      modelBuffer = fs.readFileSync(modelPath);
+    } else {
+      const modelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+      logger.info({ modelUrl }, "Downloading MediaPipe hand landmarker model");
+      const res = await fetch(modelUrl);
+      if (!res.ok) throw new Error(`Failed to download model: ${res.status}`);
+      const arr = await res.arrayBuffer();
+      modelBuffer = new Uint8Array(arr);
+    }
+
+    logger.info({ wasmUrl, modelPath: fs.existsSync(modelPath) ? modelPath : "cached" }, "Loading MediaPipe hand landmarker for background camera gestures");
 
     const vision = await FilesetResolver.forVisionTasks(wasmUrl);
-    const modelBuffer = fs.readFileSync(modelPath);
     const landmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetBuffer: modelBuffer, delegate: "CPU" },
       runningMode: "IMAGE",
@@ -68,7 +79,7 @@ async function getLandmarker(): Promise<HandLandmarker> {
     });
     logger.info("Background camera hand landmarker loaded");
     return landmarker;
-})();
+  })();
   return landmarkerInit;
 }
 
