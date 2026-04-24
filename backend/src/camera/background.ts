@@ -4,13 +4,35 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import jpeg from "jpeg-js";
-import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import type { CameraCalibration, CameraConfig, CameraGestureBinding, CameraGestureType } from "../types";
 import { logger } from "../logger";
 import { config } from "../config";
 import { loadCameras, loadCameraGroups } from "./store";
 import { triggerCameraGesture } from "./trigger";
 import { subscribeSharedRtsp } from "./rtsp_shared";
+
+const mockDocument = {
+  createElement: () => ({ style: {}, appendChild: () => {}, removeChild: () => {} }),
+  createDocumentFragment: () => ({ appendChild: () => {} }),
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  getElementById: () => null,
+  body: { appendChild: () => {}, removeChild: () => {}, style: {} },
+};
+Object.defineProperty(mockDocument, "createElement", { writable: false });
+Object.defineProperty(mockDocument, "createDocumentFragment", { writable: false });
+Object.defineProperty(mockDocument, "addEventListener", { writable: false });
+Object.defineProperty(mockDocument, "removeEventListener", { writable: false });
+Object.defineProperty(mockDocument, "getElementById", { writable: false });
+Object.defineProperty(globalThis, "document", { value: mockDocument });
+(globalThis as unknown as { window?: unknown }).window = globalThis;
+(globalThis as unknown as { navigator?: unknown }).navigator = { userAgent: "node" };
+(globalThis as unknown as { performance?: unknown }).performance = { now: () => Date.now() };
+
+const mediapipe = require("@mediapipe/tasks-vision");
+const FilesetResolver = mediapipe.FilesetResolver;
+const HandLandmarker = mediapipe.HandLandmarker;
+type HandLandmarker = InstanceType<typeof mediapipe.HandLandmarker>;
 
 const FINGER_TIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
