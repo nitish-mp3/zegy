@@ -13,6 +13,12 @@ RUN npm ci --include=dev
 COPY backend backend
 COPY frontend frontend
 RUN npm run build --workspaces
+
+# Bundle MediaPipe hand model for offline/background use (Home Assistant add-ons often
+# don't have reliable outbound internet access).
+RUN mkdir -p /app/backend/dist/mediapipe && \
+    wget -O /app/backend/dist/mediapipe/hand_landmarker.task "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+
 RUN npm prune --omit=dev --workspaces
 
 # --------------- add-on stage ---------------

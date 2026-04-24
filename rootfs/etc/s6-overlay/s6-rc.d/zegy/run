@@ -4,4 +4,9 @@ bashio::log.info "Starting Zegy Sensor Manager..."
 
 export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 
+# Ensure background camera gesture service can load MediaPipe assets offline.
+# WASM is provided by the installed npm package; model is bundled into dist at build time.
+export MEDIAPIPE_WASM_URL="/app/node_modules/@mediapipe/tasks-vision/wasm"
+export MEDIAPIPE_HAND_MODEL_URL="/app/backend/dist/mediapipe/hand_landmarker.task"
+
 exec node /app/backend/dist/index.js

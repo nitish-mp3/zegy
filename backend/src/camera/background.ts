@@ -313,6 +313,7 @@ let landmarkerInit: Promise<HandLandmarker> | null = null;
 async function getLandmarker(): Promise<HandLandmarker> {
   if (landmarkerInit) return landmarkerInit;
   landmarkerInit = (async () => {
+    logger.info({ wasm: WASM_URL, model: MODEL_URL }, "Loading MediaPipe hand landmarker for background camera gestures");
     const vision = await FilesetResolver.forVisionTasks(WASM_URL);
     const landmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
@@ -356,7 +357,15 @@ async function runCameraLoop(cam: CameraConfig, signal: AbortSignal): Promise<vo
     triggerInFlight: false,
   };
 
-  const landmarker = await getLandmarker();
+  logger.info({ cameraId: cam.id, name: cam.name }, "Background camera gesture loop starting");
+  let landmarker: HandLandmarker;
+  try {
+    landmarker = await getLandmarker();
+  } catch (err) {
+    logger.error({ err, cameraId: cam.id }, "Failed to initialize MediaPipe landmarker for background camera gestures");
+    await sleep(5000);
+    return;
+  }
 
   while (!signal.aborted) {
     if (!hasEnabledCameraGestures(cam)) {
