@@ -153,28 +153,14 @@ export function useHandDetection(
     initPromiseRef.current = (async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-        // GPU delegate is faster but often unavailable in headless/embedded browsers.
-        // Fall back to CPU so background gesture detection keeps working.
-        let landmarker: HandLandmarker;
-        try {
-          landmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-            runningMode: "VIDEO",
-            numHands: 1,
-            minHandDetectionConfidence: 0.5,
-            minHandPresenceConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-          });
-        } catch {
-          landmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-            runningMode: "VIDEO",
-            numHands: 1,
-            minHandDetectionConfidence: 0.5,
-            minHandPresenceConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-          });
-        }
+        const landmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+          runningMode: "VIDEO",
+          numHands: 1,
+          minHandDetectionConfidence: 0.5,
+          minHandPresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
         landmarkerRef.current = landmarker;
         setReady(true);
       } catch (err) {

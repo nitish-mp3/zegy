@@ -174,7 +174,7 @@ export function subscribeSharedRtsp(cameraId: string, rtspUrl: string): {
     }
   };
 
-  out.on("close", close);
+  // out.on("close", close);
   out.on("error", close);
 
   return {
