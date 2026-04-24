@@ -3,8 +3,8 @@ import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import ffmpegBin from "ffmpeg-static";
-import { loadJson, saveJson } from "../store";
-import { executeActions } from "../actions";
+import { triggerCameraGesture } from "../camera/trigger";
+import { loadCameras, saveCameras, loadCameraGroups, saveCameraGroups } from "../camera/store";
 import { logger } from "../logger";
 import { config } from "../config";
 import { getStates } from "../ha/client";
@@ -17,34 +17,6 @@ import type {
   DiscoveredCamera,
   ActionStep,
 } from "../types";
-
-const CAMERAS_FILE = "cameras.json";
-const CAMERA_GROUPS_FILE = "camera-groups.json";
-
-export function loadCameras(): CameraConfig[] {
-  const raw = loadJson<CameraConfig[]>(CAMERAS_FILE, []);
-  return raw.map((c) => ({
-    ...c,
-    gestures: Array.isArray(c.gestures) ? c.gestures : [],
-    calibration: c.calibration ?? null,
-    groupId: c.groupId ?? null,
-    snapshotUrl: c.snapshotUrl ?? "",
-    username: c.username ?? "",
-    password: c.password ?? "",
-  }));
-}
-
-function saveCameras(cameras: CameraConfig[]): void {
-  saveJson(CAMERAS_FILE, cameras);
-}
-
-function loadGroups(): CameraGroup[] {
-  return loadJson<CameraGroup[]>(CAMERA_GROUPS_FILE, []);
-}
-
-function saveGroups(groups: CameraGroup[]): void {
-  saveJson(CAMERA_GROUPS_FILE, groups);
-}
 
 function genId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -220,38 +192,14 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
     if (!VALID_GESTURE_TYPES.includes(gesture as CameraGestureType)) {
       return reply.status(400).send({ error: "Invalid gesture type" });
     }
-
-    const cameras = loadCameras();
-    const camera = cameras.find((c) => c.id === req.params.id);
-    if (!camera) return reply.status(404).send({ error: "Camera not found" });
-
-    const matchingBindings: CameraGestureBinding[] = [];
-
-    for (const g of camera.gestures) {
-      if (g.enabled && g.gesture === gesture) matchingBindings.push(g);
+    const result = await triggerCameraGesture(req.params.id, gesture as CameraGestureType);
+    if (!result.triggered && result.reason === "Camera not found") {
+      return reply.status(404).send({ error: "Camera not found" });
     }
-
-    if (camera.groupId) {
-      const groups = loadGroups();
-      const group = groups.find((g) => g.id === camera.groupId);
-      if (group) {
-        for (const g of group.gestures) {
-          if (g.enabled && g.gesture === gesture) matchingBindings.push(g);
-        }
-      }
+    if (!result.triggered) {
+      return reply.send({ triggered: false, reason: result.reason ?? "Not triggered" });
     }
-
-    if (matchingBindings.length === 0) {
-      return reply.send({ triggered: false, reason: "No matching bindings" });
-    }
-
-    const allActions = matchingBindings.flatMap((b) => b.actions);
-    if (allActions.length > 0) {
-      executeActions(allActions).catch(() => {});
-    }
-
-    logger.info({ cameraId: camera.id, gesture, bindings: matchingBindings.length }, "Camera gesture triggered");
-    return reply.send({ triggered: true, gesture, bindingsMatched: matchingBindings.length });
+    return reply.send({ triggered: true, gesture, bindingsMatched: result.bindingsMatched });
   });
 
   app.get<{ Params: { id: string } }>("/api/cameras/:id/snapshot", async (req, reply) => {
@@ -433,7 +381,7 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/camera-groups", async (_req, reply) => {
-    return reply.send(loadGroups());
+    return reply.send(loadCameraGroups());
   });
 
   app.post("/api/camera-groups", async (req, reply) => {
@@ -449,14 +397,14 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
         : [],
     };
 
-    const groups = loadGroups();
+    const groups = loadCameraGroups();
     groups.push(group);
-    saveGroups(groups);
+    saveCameraGroups(groups);
     return reply.status(201).send(group);
   });
 
   app.put<{ Params: { id: string } }>("/api/camera-groups/:id", async (req, reply) => {
-    const groups = loadGroups();
+    const groups = loadCameraGroups();
     const idx = groups.findIndex((g) => g.id === req.params.id);
     if (idx === -1) return reply.status(404).send({ error: "Group not found" });
 
@@ -468,17 +416,17 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
         .filter((g): g is CameraGestureBinding => g !== null);
     }
 
-    saveGroups(groups);
+    saveCameraGroups(groups);
     return reply.send(groups[idx]);
   });
 
   app.delete<{ Params: { id: string } }>("/api/camera-groups/:id", async (req, reply) => {
-    const groups = loadGroups();
+    const groups = loadCameraGroups();
     const filtered = groups.filter((g) => g.id !== req.params.id);
     if (filtered.length === groups.length) {
       return reply.status(404).send({ error: "Group not found" });
     }
-    saveGroups(filtered);
+    saveCameraGroups(filtered);
 
     const cameras = loadCameras();
     let changed = false;
