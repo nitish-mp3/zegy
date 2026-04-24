@@ -4,10 +4,11 @@ import type { CameraCalibration, CameraGestureType } from "../api/client";
 
 // NOTE: In Home Assistant add-ons (ingress), the app is served under a subpath.
 // Using absolute `/...` URLs breaks because it points at the HA root, not the add-on.
-// So we resolve MediaPipe assets relative to Vite's base URL.
-const BASE_URL = import.meta.env.BASE_URL || "./";
-const WASM_URL = new URL("mediapipe/wasm", BASE_URL).toString();
-const MODEL_URL = new URL("mediapipe/hand_landmarker.task", BASE_URL).toString();
+// Also `new URL(..., "./")` throws because base must be absolute. So we resolve against
+// the current page URL first, then apply Vite's BASE_URL within that origin.
+const APP_BASE = new URL(import.meta.env.BASE_URL || "./", window.location.href);
+const WASM_URL = new URL("mediapipe/wasm", APP_BASE).toString();
+const MODEL_URL = new URL("mediapipe/hand_landmarker.task", APP_BASE).toString();
 
 const FINGER_TIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
