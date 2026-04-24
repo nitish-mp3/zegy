@@ -1,10 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
-import { spawn } from "node:child_process";
 import os from "node:os";
-import ffmpegBin from "ffmpeg-static";
 import { triggerCameraGesture } from "../camera/trigger";
 import { loadCameras, saveCameras, loadCameraGroups, saveCameraGroups } from "../camera/store";
+import { subscribeSharedRtsp, getSharedRtspBoundary } from "../camera/rtsp_shared";
 import { logger } from "../logger";
 import { config } from "../config";
 import { getStates } from "../ha/client";
@@ -290,55 +289,27 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
         ? `rtsp://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${baseRtsp.slice("rtsp://".length)}`
         : baseRtsp;
 
-      if (!ffmpegBin) {
-        return reply.status(502).send({ error: "FFmpeg binary not found in package" });
-      }
+      // Shared RTSP stream: keeps one FFmpeg process per camera and prevents reconnects
+      // when UI closes/reopens quickly.
+      const sub = subscribeSharedRtsp(camera.id, rtspUrl);
+      sub.ensureStarted();
 
-      // Hijack and send 200 headers immediately so the browser doesn't time out
-      // waiting for FFmpeg to connect (RTSP negotiation takes 2-3 s).
       reply.hijack();
       reply.raw.writeHead(200, {
-        "Content-Type": "multipart/x-mixed-replace; boundary=ffserver",
+        "Content-Type": `multipart/x-mixed-replace; boundary=${getSharedRtspBoundary()}`,
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
         "Access-Control-Allow-Origin": "*",
       });
 
-      const proc = spawn(
-        ffmpegBin,
-        [
-          "-loglevel", "error",
-          "-rtsp_transport", "tcp",
-          "-i", rtspUrl,
-          "-f", "mpjpeg",
-          "-q:v", "5",
-          "-r", "10",
-          "pipe:1",
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] },
-      );
-
-      const { stdout, stderr } = proc;
-      if (!stdout) {
-        reply.raw.end();
-        return reply;
-      }
-
-      proc.on("error", (err: NodeJS.ErrnoException) => {
-        logger.error({ err, cameraId: camera.id }, "FFmpeg process error");
-        if (!reply.raw.destroyed) reply.raw.end();
+      sub.stream.pipe(reply.raw, { end: false });
+      req.raw.on("close", () => {
+        try {
+          sub.close();
+        } catch {
+          // ignore
+        }
       });
-
-      proc.on("close", () => {
-        if (!reply.raw.destroyed) reply.raw.end();
-      });
-
-      stderr?.on("data", (chunk: Buffer) => {
-        logger.error({ msg: chunk.toString().trim(), cameraId: camera.id }, "FFmpeg stderr");
-      });
-
-      stdout.pipe(reply.raw, { end: false });
-      req.raw.on("close", () => proc.kill("SIGTERM"));
       return reply;
     }
 

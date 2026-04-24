@@ -1,7 +1,5 @@
-import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { PassThrough, Readable } from "node:stream";
-import ffmpegBin from "ffmpeg-static";
 import jpeg from "jpeg-js";
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import type { CameraCalibration, CameraConfig, CameraGestureBinding, CameraGestureType } from "../types";
@@ -9,6 +7,7 @@ import { logger } from "../logger";
 import { config } from "../config";
 import { loadCameras, loadCameraGroups } from "./store";
 import { triggerCameraGesture } from "./trigger";
+import { subscribeSharedRtsp } from "./rtsp_shared";
 
 const WASM_URL =
   process.env.MEDIAPIPE_WASM_URL ??
@@ -233,8 +232,6 @@ async function openCameraFrameStream(
   }
 
   if (/^rtsp:\/\//i.test(cam.url)) {
-    if (!ffmpegBin) throw new Error("FFmpeg binary not found");
-
     const embedMatch = cam.url.match(/^rtsp:\/\/([^:@]+):([^@]*)@(.+)$/i);
     const baseRtsp = embedMatch ? `rtsp://${embedMatch[3]}` : cam.url;
     const user = cam.username || (embedMatch ? embedMatch[1] : "");
@@ -242,41 +239,15 @@ async function openCameraFrameStream(
     const rtspUrl = user
       ? `rtsp://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${baseRtsp.slice("rtsp://".length)}`
       : baseRtsp;
-
-    const proc = spawn(
-      ffmpegBin,
-      [
-        "-loglevel",
-        "error",
-        "-rtsp_transport",
-        "tcp",
-        "-i",
-        rtspUrl,
-        "-vf",
-        "fps=5",
-        "-q:v",
-        "5",
-        "-f",
-        "image2pipe",
-        "-vcodec",
-        "mjpeg",
-        "pipe:1",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-
-    const onAbort = () => proc.kill("SIGTERM");
+    const sub = subscribeSharedRtsp(cam.id, rtspUrl);
+    sub.ensureStarted();
+    const onAbort = () => sub.close();
     signal.addEventListener("abort", onAbort, { once: true });
-
-    proc.stderr.on("data", (chunk) => {
-      logger.debug({ cameraId: cam.id, msg: chunk.toString().trim() }, "FFmpeg stderr (background)");
-    });
-
     return {
-      stream: proc.stdout,
+      stream: sub.stream,
       close: () => {
         signal.removeEventListener("abort", onAbort);
-        proc.kill("SIGTERM");
+        sub.close();
       },
     };
   }
