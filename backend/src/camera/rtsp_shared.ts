@@ -152,30 +152,30 @@ export function subscribeSharedRtsp(cameraId: string, rtspUrl: string): {
     }
   }, 120);
 
-  const close = () => {
-    clearInterval(timer);
-    state.subscribers.delete(out);
-    out.end();
-    if (state.subscribers.size === 0) {
-      // Keep proc alive only while someone is subscribed; background worker uses its own subscription.
-      // Give a short grace period so quick UI reopen doesn't restart.
-      setTimeout(() => {
-        if (state.subscribers.size > 0 || state.stopping) return;
-        state.stopping = true;
-        try {
-          state.proc?.kill("SIGTERM");
-        } catch {
-          // ignore
-        }
-        state.proc = null;
-        streams.delete(cameraId);
-        logger.info({ cameraId }, "RTSP shared stream stopped (no subscribers)");
-      }, 5000);
-    }
-  };
+  // const close = () => {
+  //   clearInterval(timer);
+  //   state.subscribers.delete(out);
+  //   out.end();
+  //   if (state.subscribers.size === 0) {
+  //     // Keep proc alive only while someone is subscribed; background worker uses its own subscription.
+  //     // Give a short grace period so quick UI reopen doesn't restart.
+  //     setTimeout(() => {
+  //       if (state.subscribers.size > 0 || state.stopping) return;
+  //       state.stopping = true;
+  //       try {
+  //         state.proc?.kill("SIGTERM");
+  //       } catch {
+  //         // ignore
+  //       }
+  //       state.proc = null;
+  //       streams.delete(cameraId);
+  //       logger.info({ cameraId }, "RTSP shared stream stopped (no subscribers)");
+  //     }, 5000);
+  //   }
+  // };
 
   // out.on("close", close);
-  out.on("error", close);
+  // out.on("error", close);
 
   return {
     stream: out,
