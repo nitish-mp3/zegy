@@ -14,10 +14,12 @@ COPY backend backend
 COPY frontend frontend
 RUN npm run build --workspaces
 
-# Bundle MediaPipe hand model for offline/background use (Home Assistant add-ons often
+# Bundle MediaPipe assets for offline use (Home Assistant add-ons often
 # don't have reliable outbound internet access).
-RUN mkdir -p /app/backend/dist/mediapipe && \
-    wget -O /app/backend/dist/mediapipe/hand_landmarker.task "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+RUN mkdir -p /app/backend/dist/mediapipe /app/frontend/dist/mediapipe/wasm && \
+    wget -O /app/backend/dist/mediapipe/hand_landmarker.task "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task" && \
+    cp /app/node_modules/@mediapipe/tasks-vision/wasm/* /app/frontend/dist/mediapipe/wasm/ && \
+    cp /app/backend/dist/mediapipe/hand_landmarker.task /app/frontend/dist/mediapipe/hand_landmarker.task
 
 RUN npm prune --omit=dev --workspaces
 

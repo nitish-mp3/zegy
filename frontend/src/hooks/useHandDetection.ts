@@ -2,9 +2,10 @@ import { useRef, useCallback, useEffect, useState } from "react";
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import type { CameraCalibration, CameraGestureType } from "../api/client";
 
-const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+// NOTE: In Home Assistant add-ons, outbound internet is not guaranteed.
+// We serve MediaPipe assets from the same origin under /mediapipe/.
+const WASM_URL = "/mediapipe/wasm";
+const MODEL_URL = "/mediapipe/hand_landmarker.task";
 
 const FINGER_TIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
