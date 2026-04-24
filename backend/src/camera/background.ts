@@ -1,5 +1,8 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { PassThrough, Readable } from "node:stream";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import * as http from "node:http";
 import jpeg from "jpeg-js";
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import type { CameraCalibration, CameraConfig, CameraGestureBinding, CameraGestureType } from "../types";
@@ -9,16 +12,65 @@ import { loadCameras, loadCameraGroups } from "./store";
 import { triggerCameraGesture } from "./trigger";
 import { subscribeSharedRtsp } from "./rtsp_shared";
 
-const WASM_URL =
-  process.env.MEDIAPIPE_WASM_URL ??
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
-const MODEL_URL =
-  process.env.MEDIAPIPE_HAND_MODEL_URL ??
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
-
 const FINGER_TIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
 const WRIST = 0;
+
+let wasmHttpServer: http.Server | null = null;
+let wasmBaseUrl: string | null = null;
+let landmarkerInit: Promise<HandLandmarker> | null = null;
+
+async function getWasmBaseUrl(): Promise<string> {
+  if (wasmBaseUrl) return wasmBaseUrl;
+
+  const mediapipeDir = path.join(process.cwd(), "node_modules", "@mediapipe", "tasks-vision");
+  const wasmDir = path.join(mediapipeDir, "wasm");
+
+  return new Promise<string>((resolve, reject) => {
+    wasmHttpServer = http.createServer((req, res) => {
+      const filePath = path.join(wasmDir, req.url?.replace(/^\//, "") || "");
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        res.writeHead(200, { "Content-Type": "application/wasm" });
+        fs.createReadStream(filePath).pipe(res);
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    wasmHttpServer!.listen(0, () => {
+      const addr = wasmHttpServer!.address() as { port: number };
+      wasmBaseUrl = `http://127.0.0.1:${addr.port}/`;
+      logger.info({ wasmBaseUrl }, "WASM HTTP server started");
+      resolve(wasmBaseUrl);
+    });
+    wasmHttpServer!.on("error", reject);
+  });
+}
+
+async function getLandmarker(): Promise<HandLandmarker> {
+  if (landmarkerInit) return landmarkerInit;
+  landmarkerInit = (async () => {
+    const wasmUrl = await getWasmBaseUrl();
+    const modelDir = path.join(process.cwd(), "node_modules", "@mediapipe", "tasks-vision");
+    const modelPath = path.join(modelDir, "mediapipe", "hand_landmarker.task");
+
+    logger.info({ wasmUrl, modelPath }, "Loading MediaPipe hand landmarker for background camera gestures");
+
+    const vision = await FilesetResolver.forVisionTasks(wasmUrl);
+    const modelBuffer = fs.readFileSync(modelPath);
+    const landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetBuffer: modelBuffer, delegate: "CPU" },
+      runningMode: "IMAGE",
+      numHands: 1,
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    logger.info("Background camera hand landmarker loaded");
+    return landmarker;
+})();
+  return landmarkerInit;
+}
 
 function distance3d(
   a: { x: number; y: number; z: number },
@@ -306,27 +358,6 @@ async function openCameraFrameStream(
     stream: readable,
     close: () => controller.abort(),
   };
-}
-
-let landmarkerInit: Promise<HandLandmarker> | null = null;
-
-async function getLandmarker(): Promise<HandLandmarker> {
-  if (landmarkerInit) return landmarkerInit;
-  landmarkerInit = (async () => {
-    logger.info({ wasm: WASM_URL, model: MODEL_URL }, "Loading MediaPipe hand landmarker for background camera gestures");
-    const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-    const landmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-      runningMode: "IMAGE",
-      numHands: 1,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-    logger.info("Background camera hand landmarker loaded");
-    return landmarker;
-  })();
-  return landmarkerInit;
 }
 
 function decodeJpegToImageData(buf: Buffer): { data: Uint8ClampedArray; width: number; height: number } | null {
