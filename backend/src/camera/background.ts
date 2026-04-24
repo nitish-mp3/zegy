@@ -11,7 +11,7 @@ import { loadCameras, loadCameraGroups } from "./store";
 import { triggerCameraGesture } from "./trigger";
 import { subscribeSharedRtsp } from "./rtsp_shared";
 
-const mockDocument = {
+(globalThis as unknown as { document?: unknown }).document = {
   createElement: () => ({ style: {}, appendChild: () => {}, removeChild: () => {} }),
   createDocumentFragment: () => ({ appendChild: () => {} }),
   addEventListener: () => {},
@@ -19,31 +19,9 @@ const mockDocument = {
   getElementById: () => null,
   body: { appendChild: () => {}, removeChild: () => {}, style: {} },
 };
-Object.defineProperty(mockDocument, "createElement", { writable: false });
-Object.defineProperty(mockDocument, "createDocumentFragment", { writable: false });
-Object.defineProperty(mockDocument, "addEventListener", { writable: false });
-Object.defineProperty(mockDocument, "removeEventListener", { writable: false });
-Object.defineProperty(mockDocument, "getElementById", { writable: false });
-Object.defineProperty(globalThis, "document", { value: mockDocument });
-Object.defineProperty(globalThis, "window", { value: globalThis });
-Object.defineProperty(globalThis, "navigator", { value: { userAgent: "node" } });
-Object.defineProperty(globalThis, "performance", {
-  value: Object.assign(Object.create(null), {
-    now: () => Date.now(),
-    timeOrigin: Date.now(),
-    timing: { navigationStart: Date.now() },
-    navigation: { type: 0, redirectCount: 0 },
-    clearMarks: () => {},
-    clearMeasures: () => {},
-    clearResourceTimings: () => {},
-    getEntries: () => [],
-    getEntriesByName: () => [],
-    getEntriesByType: () => [],
-    mark: () => {},
-    measure: () => {},
-    setResourceTimingBufferSize: () => {},
-  }),
-});
+(globalThis as unknown as { window?: unknown }).window = globalThis;
+(globalThis as unknown as { navigator?: unknown }).navigator = { userAgent: "node" };
+(globalThis as unknown as { performance?: unknown }).performance = { now: () => Date.now() };
 
 const mediapipe = require("@mediapipe/tasks-vision");
 const FilesetResolver = mediapipe.FilesetResolver;
