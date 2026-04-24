@@ -2,10 +2,12 @@ import { useRef, useCallback, useEffect, useState } from "react";
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import type { CameraCalibration, CameraGestureType } from "../api/client";
 
-// NOTE: In Home Assistant add-ons, outbound internet is not guaranteed.
-// We serve MediaPipe assets from the same origin under /mediapipe/.
-const WASM_URL = "/mediapipe/wasm";
-const MODEL_URL = "/mediapipe/hand_landmarker.task";
+// NOTE: In Home Assistant add-ons (ingress), the app is served under a subpath.
+// Using absolute `/...` URLs breaks because it points at the HA root, not the add-on.
+// So we resolve MediaPipe assets relative to Vite's base URL.
+const BASE_URL = import.meta.env.BASE_URL || "./";
+const WASM_URL = new URL("mediapipe/wasm", BASE_URL).toString();
+const MODEL_URL = new URL("mediapipe/hand_landmarker.task", BASE_URL).toString();
 
 const FINGER_TIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
