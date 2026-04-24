@@ -25,9 +25,9 @@ Object.defineProperty(mockDocument, "addEventListener", { writable: false });
 Object.defineProperty(mockDocument, "removeEventListener", { writable: false });
 Object.defineProperty(mockDocument, "getElementById", { writable: false });
 Object.defineProperty(globalThis, "document", { value: mockDocument });
-(globalThis as unknown as { window?: unknown }).window = globalThis;
-(globalThis as unknown as { navigator?: unknown }).navigator = { userAgent: "node" };
-(globalThis as unknown as { performance?: unknown }).performance = { now: () => Date.now() };
+Object.defineProperty(globalThis, "window", { value: globalThis });
+Object.defineProperty(globalThis, "navigator", { value: { userAgent: "node" } });
+Object.defineProperty(globalThis, "performance", { value: { now: () => Date.now() } });
 
 const mediapipe = require("@mediapipe/tasks-vision");
 const FilesetResolver = mediapipe.FilesetResolver;
