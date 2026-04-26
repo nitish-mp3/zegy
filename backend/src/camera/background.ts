@@ -11,17 +11,25 @@ import { loadCameras, loadCameraGroups } from "./store";
 import { triggerCameraGesture } from "./trigger";
 import { subscribeSharedRtsp } from "./rtsp_shared";
 
-(globalThis as unknown as { document?: unknown }).document = {
+function defineBrowserGlobal(name: string, value: unknown): void {
+  Object.defineProperty(globalThis, name, {
+    value,
+    configurable: true,
+    writable: true,
+  });
+}
+
+defineBrowserGlobal("document", {
   createElement: () => ({ style: {}, appendChild: () => {}, removeChild: () => {} }),
   createDocumentFragment: () => ({ appendChild: () => {} }),
   addEventListener: () => {},
   removeEventListener: () => {},
   getElementById: () => null,
   body: { appendChild: () => {}, removeChild: () => {}, style: {} },
-};
-(globalThis as unknown as { window?: unknown }).window = globalThis;
-(globalThis as unknown as { navigator?: unknown }).navigator = { userAgent: "node" };
-(globalThis as unknown as { performance?: unknown }).performance = { now: () => Date.now() };
+});
+defineBrowserGlobal("window", globalThis);
+defineBrowserGlobal("navigator", { userAgent: "node" });
+defineBrowserGlobal("performance", globalThis.performance ?? { now: () => Date.now() });
 
 const mediapipe = require("@mediapipe/tasks-vision");
 const FilesetResolver = mediapipe.FilesetResolver;

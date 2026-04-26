@@ -3,6 +3,12 @@ import { logger } from "../logger";
 import type { CameraGestureBinding, CameraGestureType } from "../types";
 import { loadCameras, loadCameraGroups } from "./store";
 
+const triggerCooldowns = new Map<string, number>();
+
+function cooldownKey(cameraId: string, gesture: CameraGestureType): string {
+  return `${cameraId}:${gesture}`;
+}
+
 export async function triggerCameraGesture(cameraId: string, gesture: CameraGestureType): Promise<{
   triggered: boolean;
   bindingsMatched: number;
@@ -33,9 +39,21 @@ export async function triggerCameraGesture(cameraId: string, gesture: CameraGest
     return { triggered: false, bindingsMatched: 0, actionCount: 0, reason: "No matching bindings" };
   }
 
+  const now = Date.now();
+  const key = cooldownKey(cameraId, gesture);
+  const cooldownUntil = triggerCooldowns.get(key) ?? 0;
+  if (cooldownUntil > now) {
+    return { triggered: false, bindingsMatched: matchingBindings.length, actionCount: 0, reason: "Cooldown active" };
+  }
+
   const allActions = matchingBindings.flatMap((b) => b.actions);
   if (allActions.length > 0) {
     executeActions(allActions).catch(() => {});
+  }
+
+  const cooldownMs = Math.max(0, ...matchingBindings.map((b) => b.cooldown ?? 3000));
+  if (cooldownMs > 0) {
+    triggerCooldowns.set(key, now + cooldownMs);
   }
 
   logger.info({ cameraId, gesture, bindings: matchingBindings.length }, "Camera gesture triggered");

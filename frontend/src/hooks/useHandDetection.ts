@@ -137,9 +137,14 @@ export function useHandDetection(
   enabled: boolean,
 ) {
   const landmarkerRef = useRef<HandLandmarker | null>(null);
+  const calibrationRef = useRef<CameraCalibration | null>(calibration);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const initPromiseRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    calibrationRef.current = calibration;
+  }, [calibration]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -150,25 +155,51 @@ export function useHandDetection(
 
     if (initPromiseRef.current) return;
 
+    let cancelled = false;
+
     initPromiseRef.current = (async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-        const landmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-          runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.5,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
+        let landmarker: HandLandmarker | null = null;
+        let lastError: unknown = null;
+
+        for (const delegate of ["GPU", "CPU"] as const) {
+          try {
+            landmarker = await HandLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath: MODEL_URL, delegate },
+              runningMode: "VIDEO",
+              numHands: 1,
+              minHandDetectionConfidence: 0.5,
+              minHandPresenceConfidence: 0.5,
+              minTrackingConfidence: 0.5,
+            });
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+
+        if (!landmarker) {
+          throw lastError instanceof Error ? lastError : new Error("Failed to load hand detection model");
+        }
+
+        if (cancelled) {
+          landmarker.close();
+          return;
+        }
+
         landmarkerRef.current = landmarker;
+        setLoadError(null);
         setReady(true);
       } catch (err) {
+        initPromiseRef.current = null;
+        setReady(false);
         setLoadError(err instanceof Error ? err.message : "Failed to load hand detection model");
       }
     })();
 
     return () => {
+      cancelled = true;
       if (landmarkerRef.current) {
         landmarkerRef.current.close();
         landmarkerRef.current = null;
@@ -192,7 +223,7 @@ export function useHandDetection(
 
         const landmarks = results.landmarks[0];
         const features = computeFeatureVector(landmarks);
-        const { gesture, confidence } = classifyGesture(features, calibration);
+        const { gesture, confidence } = classifyGesture(features, calibrationRef.current);
         const fingerExtensions = computeFingerExtensions(landmarks);
 
         return { gesture, confidence, landmarks, fingerExtensions };
@@ -200,7 +231,7 @@ export function useHandDetection(
         return { gesture: null, confidence: 0, landmarks: null, fingerExtensions: [] };
       }
     },
-    [calibration, ready],
+    [ready],
   );
 
   const captureFeatures = useCallback(

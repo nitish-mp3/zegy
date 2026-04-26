@@ -41,8 +41,6 @@ export function startHeadlessUiGestureRunner(): void {
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--disable-software-rasterizer",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
@@ -62,10 +60,9 @@ export function startHeadlessUiGestureRunner(): void {
       logger.warn({ err }, "Headless UI page error");
     });
 
-    // IMPORTANT: load the same frontend that normally runs in the ingress UI.
-    // It already mounts GestureManager globally (App.tsx) and will keep the camera
-    // gesture detectors running as long as the page stays alive.
-    const url = `http://127.0.0.1:${config.port}/`;
+    // Load a runner-only frontend mode so camera gesture detection continues
+    // without a user keeping the add-on UI open.
+    const url = `http://127.0.0.1:${config.port}/?zegyGestureRunner=1`;
 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
     logger.info({ url }, "Headless UI loaded");
@@ -110,4 +107,3 @@ export async function stopHeadlessUiGestureRunner(): Promise<void> {
   if (!h) return;
   await h.stop();
 }
-

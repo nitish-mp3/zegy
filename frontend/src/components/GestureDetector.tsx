@@ -6,6 +6,7 @@ import type { CameraConfig, CameraGestureType } from "../api/client";
 
 interface GestureDetectorProps {
   camera: CameraConfig;
+  bindings?: CameraConfig["gestures"];
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -24,16 +25,21 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export default function GestureDetector({ camera }: GestureDetectorProps) {
+export default function GestureDetector({ camera, bindings }: GestureDetectorProps) {
   const lastDetectRef = useRef(0);
   const lastGestureRef = useRef<{ gesture: CameraGestureType; since: number } | null>(null);
   const cooldownUntilRef = useRef(0);
   const triggerInFlightRef = useRef(false);
   const { ready, detectFromVideo } = useHandDetection(camera.calibration, camera.enabled);
   const enabledBindings = useMemo(
-    () => camera.gestures.filter((g) => g.enabled),
-    [camera.gestures],
+    () => (bindings ?? camera.gestures).filter((g) => g.enabled),
+    [bindings, camera.gestures],
   );
+  const bindingsSignature = useMemo(
+    () => enabledBindings.map((b) => `${b.id}:${b.gesture}:${b.holdTime}:${b.cooldown}`).join("|"),
+    [enabledBindings],
+  );
+  const sourceSignature = `${camera.url}:${camera.snapshotUrl}:${camera.username}:${camera.passwordSet}`;
 
   useEffect(() => {
     if (!camera.enabled || !ready || enabledBindings.length === 0) return;
@@ -132,7 +138,7 @@ export default function GestureDetector({ camera }: GestureDetectorProps) {
     })();
 
     return () => ac.abort();
-  }, [camera.id, camera.enabled, ready, detectFromVideo, enabledBindings]);
+  }, [camera.id, camera.enabled, ready, detectFromVideo, bindingsSignature, sourceSignature]);
 
   return null;
 }
