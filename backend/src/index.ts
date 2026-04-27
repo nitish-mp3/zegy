@@ -8,7 +8,7 @@ import { broadcastEvent } from "./ws";
 import { loadZones } from "./routes/zones";
 import { loadNodes, autoCreateNodeEntry } from "./routes/nodes";
 import { loadGestures } from "./routes/gestures";
-import { startHeadlessUiGestureRunner, stopHeadlessUiGestureRunner } from "./camera/headless_ui";
+import { startBackgroundCameraGestures, stopBackgroundCameraGestures } from "./camera/background";
 
 async function discoverMqttFromSupervisor(): Promise<void> {
   if (config.mqtt.url || !config.isAddon) return;
@@ -87,12 +87,12 @@ async function main(): Promise<void> {
 
   await app.listen({ port: config.port, host: config.host });
   logger.info(`Zegy Sensor Manager running on http://${config.host}:${config.port}`);
-  startHeadlessUiGestureRunner();
+  startBackgroundCameraGestures();
 
   const shutdown = async () => {
     logger.info("Shutting down...");
     stopMqtt();
-    await stopHeadlessUiGestureRunner();
+    await stopBackgroundCameraGestures();
     stopHaWebSocket();
     await app.close();
     process.exit(0);

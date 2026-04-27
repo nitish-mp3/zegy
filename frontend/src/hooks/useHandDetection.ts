@@ -2,13 +2,25 @@ import { useRef, useCallback, useEffect, useState } from "react";
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import type { CameraCalibration, CameraGestureType } from "../api/client";
 
-// NOTE: In Home Assistant add-ons (ingress), the app is served under a subpath.
-// Using absolute `/...` URLs breaks because it points at the HA root, not the add-on.
-// Also `new URL(..., "./")` throws because base must be absolute. So we resolve against
-// the current page URL first, then apply Vite's BASE_URL within that origin.
-const APP_BASE = new URL(import.meta.env.BASE_URL || "./", window.location.href);
-const WASM_URL = new URL("mediapipe/wasm", APP_BASE).toString();
-const MODEL_URL = new URL("mediapipe/hand_landmarker.task", APP_BASE).toString();
+const INGRESS_BASE =
+  typeof window !== "undefined"
+    ? (window.location.pathname.match(/^\/api\/hassio_ingress\/[^/]+/)?.[0] ?? "")
+    : "";
+const ORIGIN = typeof window !== "undefined" ? window.location.origin : "";
+const LOCAL_WASM_URL = `${ORIGIN}${INGRESS_BASE}/api/mediapipe/wasm`;
+const LOCAL_MODEL_URL = `${ORIGIN}${INGRESS_BASE}/api/mediapipe/hand_landmarker.task`;
+const CDN_WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm";
+const CDN_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+
+const INIT_PLANS: { wasmUrl: string; modelUrl: string }[] = [
+  { wasmUrl: LOCAL_WASM_URL, modelUrl: LOCAL_MODEL_URL },
+  { wasmUrl: LOCAL_WASM_URL, modelUrl: CDN_MODEL_URL },
+  { wasmUrl: CDN_WASM_URL, modelUrl: CDN_MODEL_URL },
+];
+
+let sharedLandmarker: HandLandmarker | null = null;
+let sharedLandmarkerInit: Promise<HandLandmarker> | null = null;
 
 const FINGER_TIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
@@ -132,80 +144,130 @@ function vectorDistance(a: number[], b: number[]): number {
   return Math.sqrt(sum);
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function createLandmarker(): Promise<HandLandmarker> {
+  let lastError: unknown = null;
+
+  for (const plan of INIT_PLANS) {
+    let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
+
+    try {
+      vision = await withTimeout(
+        FilesetResolver.forVisionTasks(plan.wasmUrl),
+        15000,
+        `WASM init (${plan.wasmUrl})`,
+      );
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
+
+    for (const delegate of ["GPU", "CPU"] as const) {
+      try {
+        const landmarker = await withTimeout(
+          HandLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: plan.modelUrl, delegate },
+            runningMode: "VIDEO",
+            numHands: 1,
+            minHandDetectionConfidence: 0.5,
+            minHandPresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          }),
+          15000,
+          `Model init (${delegate})`,
+        );
+        return landmarker;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Failed to load hand detection model");
+}
+
+function getSharedLandmarker(): Promise<HandLandmarker> {
+  if (sharedLandmarker) {
+    return Promise.resolve(sharedLandmarker);
+  }
+
+  if (sharedLandmarkerInit) {
+    return sharedLandmarkerInit;
+  }
+
+  sharedLandmarkerInit = createLandmarker()
+    .then((landmarker) => {
+      sharedLandmarker = landmarker;
+      return landmarker;
+    })
+    .catch((err) => {
+      sharedLandmarkerInit = null;
+      throw err;
+    });
+
+  return sharedLandmarkerInit;
+}
+
 export function useHandDetection(
   calibration: CameraCalibration | null,
   enabled: boolean,
 ) {
-  const landmarkerRef = useRef<HandLandmarker | null>(null);
+  const landmarkerRef = useRef<HandLandmarker | null>(sharedLandmarker);
   const calibrationRef = useRef<CameraCalibration | null>(calibration);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(!!sharedLandmarker && enabled);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const initPromiseRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     calibrationRef.current = calibration;
   }, [calibration]);
 
   useEffect(() => {
-    if (!enabled) return;
-    if (landmarkerRef.current) {
-      setReady(true);
-      return;
+    let disposed = false;
+
+    if (!enabled) {
+      setReady(false);
+      setLoadError(null);
+      return () => {
+        disposed = true;
+      };
     }
 
-    if (initPromiseRef.current) return;
+    setReady(!!sharedLandmarker);
+    setLoadError(null);
 
-    let cancelled = false;
-
-    initPromiseRef.current = (async () => {
-      try {
-        const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-        let landmarker: HandLandmarker | null = null;
-        let lastError: unknown = null;
-
-        for (const delegate of ["GPU", "CPU"] as const) {
-          try {
-            landmarker = await HandLandmarker.createFromOptions(vision, {
-              baseOptions: { modelAssetPath: MODEL_URL, delegate },
-              runningMode: "VIDEO",
-              numHands: 1,
-              minHandDetectionConfidence: 0.5,
-              minHandPresenceConfidence: 0.5,
-              minTrackingConfidence: 0.5,
-            });
-            break;
-          } catch (err) {
-            lastError = err;
-          }
-        }
-
-        if (!landmarker) {
-          throw lastError instanceof Error ? lastError : new Error("Failed to load hand detection model");
-        }
-
-        if (cancelled) {
-          landmarker.close();
-          return;
-        }
-
+    getSharedLandmarker()
+      .then((landmarker) => {
+        if (disposed) return;
         landmarkerRef.current = landmarker;
-        setLoadError(null);
         setReady(true);
-      } catch (err) {
-        initPromiseRef.current = null;
+        setLoadError(null);
+      })
+      .catch((err) => {
+        if (disposed) return;
         setReady(false);
         setLoadError(err instanceof Error ? err.message : "Failed to load hand detection model");
-      }
-    })();
+      });
 
     return () => {
-      cancelled = true;
-      if (landmarkerRef.current) {
-        landmarkerRef.current.close();
-        landmarkerRef.current = null;
-        initPromiseRef.current = null;
-        setReady(false);
-      }
+      disposed = true;
     };
   }, [enabled]);
 

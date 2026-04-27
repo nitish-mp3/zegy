@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
 import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
 import { triggerCameraGesture } from "../camera/trigger";
 import { loadCameras, saveCameras, loadCameraGroups, saveCameraGroups } from "../camera/store";
 import { subscribeSharedRtsp, getSharedRtspBoundary } from "../camera/rtsp_shared";
@@ -84,9 +86,78 @@ function buildAuthHeaders(cam: CameraConfig): Record<string, string> {
   };
 }
 
+const MEDIAPIPE_WASM_DIR = path.resolve(
+  process.cwd(),
+  "node_modules",
+  "@mediapipe",
+  "tasks-vision",
+  "wasm",
+);
+const MEDIAPIPE_MODEL_PATH = path.resolve(
+  process.cwd(),
+  "node_modules",
+  "@mediapipe",
+  "tasks-vision",
+  "mediapipe",
+  "hand_landmarker.task",
+);
+const MEDIAPIPE_MODEL_FALLBACK_URL =
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+
+function guessMediaType(filePath: string): string {
+  if (filePath.endsWith(".wasm")) return "application/wasm";
+  if (filePath.endsWith(".js")) return "application/javascript";
+  if (filePath.endsWith(".data")) return "application/octet-stream";
+  return "application/octet-stream";
+}
+
+function resolveWasmAssetPath(rawPath: string): string | null {
+  const cleaned = rawPath.replace(/^\/+/, "");
+  if (!cleaned) return null;
+  const resolved = path.resolve(MEDIAPIPE_WASM_DIR, cleaned);
+  if (!resolved.startsWith(`${MEDIAPIPE_WASM_DIR}${path.sep}`)) return null;
+  return resolved;
+}
+
 
 
 export async function cameraRoutes(app: FastifyInstance): Promise<void> {
+  app.get<{ Params: { "*": string } }>("/api/mediapipe/wasm/*", async (req, reply) => {
+    const resolved = resolveWasmAssetPath(req.params["*"] ?? "");
+    if (!resolved) {
+      return reply.status(400).send({ error: "Invalid wasm asset path" });
+    }
+
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      return reply.status(404).send({ error: "WASM asset not found" });
+    }
+
+    reply.type(guessMediaType(resolved));
+    return reply.send(fs.createReadStream(resolved));
+  });
+
+  app.get("/api/mediapipe/hand_landmarker.task", async (_req, reply) => {
+    if (fs.existsSync(MEDIAPIPE_MODEL_PATH) && fs.statSync(MEDIAPIPE_MODEL_PATH).isFile()) {
+      reply.type("application/octet-stream");
+      return reply.send(fs.createReadStream(MEDIAPIPE_MODEL_PATH));
+    }
+
+    try {
+      const res = await fetch(MEDIAPIPE_MODEL_FALLBACK_URL, {
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok || !res.body) {
+        return reply.status(502).send({ error: "Gesture model unavailable" });
+      }
+
+      const buffer = Buffer.from(await res.arrayBuffer());
+      return reply.type("application/octet-stream").send(buffer);
+    } catch (err) {
+      logger.warn({ err }, "Failed to fetch fallback hand landmarker model");
+      return reply.status(502).send({ error: "Gesture model unavailable" });
+    }
+  });
+
   app.get("/api/cameras", async (_req, reply) => {
     const cameras = loadCameras();
     const safe = cameras.map((c) => ({
