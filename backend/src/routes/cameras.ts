@@ -101,8 +101,33 @@ const MEDIAPIPE_MODEL_PATH = path.resolve(
   "mediapipe",
   "hand_landmarker.task",
 );
+const MEDIAPIPE_BUNDLED_MODEL_PATH = path.resolve(
+  process.cwd(),
+  "backend",
+  "dist",
+  "mediapipe",
+  "hand_landmarker.task",
+);
 const MEDIAPIPE_MODEL_FALLBACK_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+
+function resolveExistingModelPath(): string | null {
+  const candidates = [
+    process.env.MEDIAPIPE_HAND_MODEL_URL ?? "",
+    MEDIAPIPE_BUNDLED_MODEL_PATH,
+    MEDIAPIPE_MODEL_PATH,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch {}
+  }
+
+  return null;
+}
 
 function guessMediaType(filePath: string): string {
   if (filePath.endsWith(".wasm")) return "application/wasm";
@@ -137,9 +162,10 @@ export async function cameraRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/mediapipe/hand_landmarker.task", async (_req, reply) => {
-    if (fs.existsSync(MEDIAPIPE_MODEL_PATH) && fs.statSync(MEDIAPIPE_MODEL_PATH).isFile()) {
+    const localModelPath = resolveExistingModelPath();
+    if (localModelPath) {
       reply.type("application/octet-stream");
-      return reply.send(fs.createReadStream(MEDIAPIPE_MODEL_PATH));
+      return reply.send(fs.createReadStream(localModelPath));
     }
 
     try {
