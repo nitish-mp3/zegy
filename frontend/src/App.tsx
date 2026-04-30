@@ -12,6 +12,7 @@ import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
 import Gestures from "./pages/Gestures";
 import CameraGestures from "./pages/CameraGestures";
+import Lighting from "./pages/Lighting";
 import type { CameraConfig, CameraGestureBinding, CameraGroup } from "./api/client";
 
 const IS_GESTURE_RUNNER =
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/automations" element={<Automations />} />
           <Route path="/gestures" element={<Gestures />} />
           <Route path="/camera-gestures" element={<CameraGestures />} />
+          <Route path="/lighting" element={<Lighting />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />

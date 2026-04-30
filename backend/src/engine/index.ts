@@ -19,3 +19,16 @@ export {
   isAuxiliaryActive,
   getAuxiliaryStates,
 } from "./presence";
+
+export {
+  getCombinedPresenceSnapshot,
+  getEnvironmentReadings,
+  loadEnvironmentSettings,
+  loadLuxAutomations,
+  onEnvironmentReading,
+  recordHaState,
+  recordMqttMessage,
+  recordTrackFrame,
+  saveEnvironmentSettings,
+  saveLuxAutomations,
+} from "./environment";

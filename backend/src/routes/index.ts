@@ -8,3 +8,4 @@ export { nodeRoutes } from "./nodes";
 export { settingsRoutes } from "./settings";
 export { gestureRoutes } from "./gestures";
 export { cameraRoutes } from "./cameras";
+export { environmentRoutes } from "./environment";

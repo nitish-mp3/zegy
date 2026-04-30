@@ -86,6 +86,54 @@ export interface TrackFrame {
   targets: TrackTarget[];
 }
 
+export type EnvironmentSourceType = "ha" | "mqtt";
+
+export interface EnvironmentMatcher {
+  haEntityIds: string[];
+  mqttTopicPatterns: string[];
+  valueKeys: string[];
+  keywords: string[];
+}
+
+export interface EnvironmentSettings {
+  lux: EnvironmentMatcher;
+  presence: EnvironmentMatcher;
+  distance: EnvironmentMatcher;
+}
+
+export interface EnvironmentReading {
+  kind: "lux" | "presence" | "distance";
+  sourceType: EnvironmentSourceType;
+  sourceId: string;
+  value: number | boolean;
+  unit: string;
+  timestamp: string;
+  rawKey: string | null;
+}
+
+export interface CombinedPresenceSnapshot {
+  occupied: boolean;
+  nearestDistance: number | null;
+  lux: number | null;
+  ld2450Targets: TrackTarget[];
+  c4001Presence: boolean | null;
+  c4001Distance: number | null;
+  updatedAt: string | null;
+}
+
+export interface LuxAutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  operator: "below" | "above" | "between" | "outside";
+  threshold: number;
+  thresholdHigh: number | null;
+  requirePresence: boolean;
+  cooldown: number;
+  actions: ActionStep[];
+  lastTriggeredAt?: string | null;
+}
+
 export interface ZoneEvent {
   id: string;
   zoneId: string;

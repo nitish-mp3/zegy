@@ -16,6 +16,7 @@ import {
   settingsRoutes,
   gestureRoutes,
   cameraRoutes,
+  environmentRoutes,
 } from "./routes";
 import { registerWebSocket } from "./ws";
 
@@ -36,6 +37,7 @@ export async function createServer() {
   await app.register(settingsRoutes);
   await app.register(gestureRoutes);
   await app.register(cameraRoutes);
+  await app.register(environmentRoutes);
 
   // WebSocket
   await app.register(registerWebSocket);

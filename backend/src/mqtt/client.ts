@@ -4,6 +4,7 @@ import { logger } from "../logger";
 import type { TrackFrame, TrackTarget, SensorNode } from "../types";
 
 type TrackCallback = (frame: TrackFrame) => void;
+type RawMqttCallback = (topic: string, payload: unknown) => void;
 
 interface FilteredTrack {
   id: number;
@@ -25,6 +26,7 @@ interface FilteredTrack {
 
 let client: mqtt.MqttClient | null = null;
 const trackListeners = new Set<TrackCallback>();
+const rawMqttListeners = new Set<RawMqttCallback>();
 const nodeStatusMap = new Map<string, { lastSeen: string; status: "online" | "offline" }>();
 const latestTargets = new Map<string, TrackTarget[]>();
 const filteredTracks = new Map<string, FilteredTrack>();
@@ -66,6 +68,11 @@ export function setAutoCreateNode(fn: (mqttNodeId: string) => SensorNode | null)
 export function onTrackFrame(cb: TrackCallback): () => void {
   trackListeners.add(cb);
   return () => { trackListeners.delete(cb); };
+}
+
+export function onRawMqttMessage(cb: RawMqttCallback): () => void {
+  rawMqttListeners.add(cb);
+  return () => { rawMqttListeners.delete(cb); };
 }
 
 export function getNodeStatus(): Map<string, { lastSeen: string; status: "online" | "offline" }> {
@@ -386,22 +393,23 @@ export function startMqtt(): void {
 
   client.on("connect", () => {
     logger.info("MQTT connected");
-    client?.subscribe("zegy/+/tracks", (err) => {
-      if (err) logger.error({ err }, "Failed to subscribe to tracks topic");
-    });
-    client?.subscribe("zegy/+/status", (err) => {
-      if (err) logger.error({ err }, "Failed to subscribe to status topic");
+    client?.subscribe("zegy/#", (err) => {
+      if (err) logger.error({ err }, "Failed to subscribe to Zegy MQTT topics");
     });
   });
 
   client.on("message", (topic: string, payload: Buffer) => {
     try {
       const parts = topic.split("/");
-      if (parts.length !== 3 || parts[0] !== "zegy") return;
+      if (parts[0] !== "zegy") return;
+      const data = JSON.parse(payload.toString());
+
+      for (const cb of rawMqttListeners) cb(topic, data);
+
+      if (parts.length !== 3) return;
 
       const nodeId = parts[1];
       const msgType = parts[2];
-      const data = JSON.parse(payload.toString());
 
       if (msgType === "tracks") {
         handleTrackMessage(nodeId, data);
@@ -459,6 +467,7 @@ export function stopMqtt(): void {
   client?.end(true);
   client = null;
   trackListeners.clear();
+  rawMqttListeners.clear();
   latestTargets.clear();
   filteredTracks.clear();
   if (staleTimer) { clearInterval(staleTimer); staleTimer = null; }

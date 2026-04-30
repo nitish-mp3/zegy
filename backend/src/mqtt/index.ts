@@ -2,6 +2,7 @@ export {
   startMqtt,
   stopMqtt,
   onTrackFrame,
+  onRawMqttMessage,
   setNodeResolver,
   setAutoCreateNode,
   getNodeStatus,

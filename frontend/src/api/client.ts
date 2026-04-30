@@ -225,6 +225,34 @@ export const api = {
 
   getHaCameras: () =>
     request<{ entityId: string; name: string; state: string }[]>("/api/ha/cameras"),
+
+  getEnvironment: () =>
+    request<{
+      settings: EnvironmentSettings;
+      luxAutomations: LuxAutomationRule[];
+      readings: EnvironmentReading[];
+      presence: CombinedPresenceSnapshot;
+    }>("/api/environment"),
+  updateEnvironmentSettings: (settings: EnvironmentSettings) =>
+    request<EnvironmentSettings>("/api/environment/settings", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    }),
+  getLuxAutomations: () => request<LuxAutomationRule[]>("/api/environment/lux-automations"),
+  createLuxAutomation: (rule: Omit<LuxAutomationRule, "id">) =>
+    request<LuxAutomationRule>("/api/environment/lux-automations", {
+      method: "POST",
+      body: JSON.stringify(rule),
+    }),
+  updateLuxAutomation: (id: string, rule: Partial<LuxAutomationRule>) =>
+    request<LuxAutomationRule>(`/api/environment/lux-automations/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(rule),
+    }),
+  deleteLuxAutomation: (id: string) =>
+    request<{ ok: boolean }>(`/api/environment/lux-automations/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 };
 
 export { BASE };
@@ -377,4 +405,50 @@ export interface CameraGroup {
   id: string;
   name: string;
   gestures: CameraGestureBinding[];
+}
+
+export interface EnvironmentMatcher {
+  haEntityIds: string[];
+  mqttTopicPatterns: string[];
+  valueKeys: string[];
+  keywords: string[];
+}
+
+export interface EnvironmentSettings {
+  lux: EnvironmentMatcher;
+  presence: EnvironmentMatcher;
+  distance: EnvironmentMatcher;
+}
+
+export interface EnvironmentReading {
+  kind: "lux" | "presence" | "distance";
+  sourceType: "ha" | "mqtt";
+  sourceId: string;
+  value: number | boolean;
+  unit: string;
+  timestamp: string;
+  rawKey: string | null;
+}
+
+export interface CombinedPresenceSnapshot {
+  occupied: boolean;
+  nearestDistance: number | null;
+  lux: number | null;
+  ld2450Targets: { id: number; x: number; y: number; speed: number; posture: string }[];
+  c4001Presence: boolean | null;
+  c4001Distance: number | null;
+  updatedAt: string | null;
+}
+
+export interface LuxAutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  operator: "below" | "above" | "between" | "outside";
+  threshold: number;
+  thresholdHigh: number | null;
+  requirePresence: boolean;
+  cooldown: number;
+  actions: ActionStep[];
+  lastTriggeredAt?: string | null;
 }

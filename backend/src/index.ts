@@ -2,13 +2,25 @@ import { config } from "./config";
 import { logger } from "./logger";
 import { createServer } from "./server";
 import { startHaWebSocket, stopHaWebSocket } from "./ha";
-import { startMqtt, stopMqtt, onTrackFrame, setNodeResolver, setAutoCreateNode } from "./mqtt";
-import { processTrackFrame, onZoneEvent, processGestureFrame, onGestureEvent, onGestureDebug, initPresenceFusion } from "./engine";
+import { onStateChanged } from "./ha";
+import { startMqtt, stopMqtt, onTrackFrame, onRawMqttMessage, setNodeResolver, setAutoCreateNode } from "./mqtt";
+import {
+  processTrackFrame,
+  onZoneEvent,
+  processGestureFrame,
+  onGestureEvent,
+  onGestureDebug,
+  initPresenceFusion,
+  recordHaState,
+  recordMqttMessage,
+  recordTrackFrame,
+  onEnvironmentReading,
+} from "./engine";
 import { broadcastEvent } from "./ws";
 import { loadZones } from "./routes/zones";
 import { loadNodes, autoCreateNodeEntry } from "./routes/nodes";
 import { loadGestures } from "./routes/gestures";
-import { startHeadlessUiGestureRunner, stopHeadlessUiGestureRunner } from "./camera/headless_ui";
+import { startBackgroundCameraGestures, stopBackgroundCameraGestures } from "./camera/background";
 
 async function discoverMqttFromSupervisor(): Promise<void> {
   if (config.mqtt.url || !config.isAddon) return;
@@ -45,6 +57,7 @@ async function main(): Promise<void> {
   setAutoCreateNode(autoCreateNodeEntry);
 
   onTrackFrame((frame) => {
+    recordTrackFrame(frame);
     broadcastEvent("track_update", {
       nodeId: frame.nodeId,
       presence: frame.presence,
@@ -83,16 +96,28 @@ async function main(): Promise<void> {
     broadcastEvent("gesture_debug", { targets });
   });
 
+  onRawMqttMessage((topic, payload) => {
+    recordMqttMessage(topic, payload);
+  });
+
+  onStateChanged((entityId, state, attributes) => {
+    recordHaState(entityId, state, attributes);
+  });
+
+  onEnvironmentReading((reading) => {
+    broadcastEvent("environment_update", { ...reading });
+  });
+
   startMqtt();
 
   await app.listen({ port: config.port, host: config.host });
   logger.info(`Zegy Sensor Manager running on http://${config.host}:${config.port}`);
-  startHeadlessUiGestureRunner();
+  startBackgroundCameraGestures();
 
   const shutdown = async () => {
     logger.info("Shutting down...");
     stopMqtt();
-    await stopHeadlessUiGestureRunner();
+    await stopBackgroundCameraGestures();
     stopHaWebSocket();
     await app.close();
     process.exit(0);

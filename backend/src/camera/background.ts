@@ -47,8 +47,14 @@ let landmarkerInit: Promise<HandLandmarker> | null = null;
 async function getWasmBaseUrl(): Promise<string> {
   if (wasmBaseUrl) return wasmBaseUrl;
 
+  const configured = process.env.MEDIAPIPE_WASM_URL ?? "";
+  if (/^https?:\/\//i.test(configured)) {
+    wasmBaseUrl = configured.endsWith("/") ? configured : `${configured}/`;
+    return wasmBaseUrl;
+  }
+
   const mediapipeDir = path.join(process.cwd(), "node_modules", "@mediapipe", "tasks-vision");
-  const wasmDir = path.join(mediapipeDir, "wasm");
+  const wasmDir = configured && fs.existsSync(configured) ? configured : path.join(mediapipeDir, "wasm");
 
   return new Promise<string>((resolve, reject) => {
     wasmHttpServer = http.createServer((req, res) => {
@@ -76,7 +82,10 @@ async function getLandmarker(): Promise<HandLandmarker> {
   landmarkerInit = (async () => {
     const wasmUrl = await getWasmBaseUrl();
     const modelDir = path.join(process.cwd(), "node_modules", "@mediapipe", "tasks-vision");
-    const modelPath = path.join(modelDir, "mediapipe", "hand_landmarker.task");
+    const configuredModel = process.env.MEDIAPIPE_HAND_MODEL_URL ?? "";
+    const modelPath = configuredModel && fs.existsSync(configuredModel)
+      ? configuredModel
+      : path.join(modelDir, "mediapipe", "hand_landmarker.task");
 
     let modelBuffer: Uint8Array;
     if (fs.existsSync(modelPath)) {
