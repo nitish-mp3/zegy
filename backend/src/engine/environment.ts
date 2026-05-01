@@ -18,20 +18,20 @@ const MAX_READINGS = 100;
 const DEFAULT_SETTINGS: EnvironmentSettings = {
   lux: {
     haEntityIds: [],
-    mqttTopicPatterns: ["zegy/+/lux", "zegy/+/light", "zegy/+/sensors", "zegy/+/state", "zegy/+/telemetry"],
+    mqttTopicPatterns: ["zegy/+/lux", "zegy/+/light", "zegy/+/sensors", "zegy/+/state", "zegy/+/telemetry", "zegy/+/tracks"],
     valueKeys: ["lux", "illuminance", "light", "light_level", "ambient_lux"],
     keywords: ["lux", "illuminance", "light"],
   },
   presence: {
     haEntityIds: [],
-    mqttTopicPatterns: ["zegy/+/presence", "zegy/+/occupancy", "zegy/+/sensors", "zegy/+/state", "zegy/+/telemetry"],
-    valueKeys: ["presence", "occupied", "occupancy", "human", "detected", "c4001_presence"],
+    mqttTopicPatterns: ["zegy/+/presence", "zegy/+/occupancy", "zegy/+/sensors", "zegy/+/state", "zegy/+/telemetry", "zegy/+/tracks"],
+    valueKeys: ["presence", "occupied", "occupancy", "human", "detected", "c4001_presence", "c4001OutPresence", "c4001RadarPresence"],
     keywords: ["presence", "occupancy", "occupied", "human", "c4001"],
   },
   distance: {
     haEntityIds: [],
-    mqttTopicPatterns: ["zegy/+/distance", "zegy/+/range", "zegy/+/sensors", "zegy/+/state", "zegy/+/telemetry"],
-    valueKeys: ["distance", "range", "distance_m", "distance_cm", "nearest", "c4001_distance"],
+    mqttTopicPatterns: ["zegy/+/distance", "zegy/+/range", "zegy/+/sensors", "zegy/+/state", "zegy/+/telemetry", "zegy/+/tracks"],
+    valueKeys: ["distance", "range", "distance_m", "distance_cm", "nearest", "c4001_distance", "c4001DistanceM", "c4001DistanceCm"],
     keywords: ["distance", "range", "nearest", "c4001"],
   },
 };
@@ -167,16 +167,23 @@ function parseBoolean(value: unknown): boolean | null {
   return null;
 }
 
+function compactKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function findPayloadValue(payload: unknown, matcher: EnvironmentMatcher, kind: EnvironmentReading["kind"]): { value: number | boolean; key: string | null } | null {
   const fields = flattenPayload(payload);
   const keyNames = matcher.valueKeys.map((k) => k.toLowerCase());
+  const compactKeyNames = matcher.valueKeys.map(compactKey);
   const keywords = matcher.keywords.map((k) => k.toLowerCase());
   const ranked = fields
     .map((field) => {
       const key = field.key.toLowerCase();
-      const exact = keyNames.some((name) => key === name || key.endsWith(`.${name}`));
-      const fuzzy = keywords.some((name) => key.includes(name));
-      return { ...field, score: exact ? 2 : fuzzy ? 1 : 0 };
+      const compact = compactKey(field.key);
+      const exact = keyNames.some((name) => key === name || key.endsWith(`.${name}`)) || compactKeyNames.some((name) => compact.includes(name));
+      const fuzzy = keywords.some((name) => key.includes(name) && (name !== "c4001" || key.includes(kind)));
+      const distancePriority = kind === "distance" && compact.includes("distancem") ? 0.2 : kind === "distance" && compact.includes("distancecm") ? 0.1 : 0;
+      return { ...field, score: exact ? 3 + distancePriority : fuzzy ? 1 : 0 };
     })
     .filter((field) => field.score > 0)
     .sort((a, b) => b.score - a.score);
@@ -203,6 +210,10 @@ function findPayloadValue(payload: unknown, matcher: EnvironmentMatcher, kind: E
   }
 
   return null;
+}
+
+function hasPayloadMatch(payload: unknown, matcher: EnvironmentMatcher, kind: EnvironmentReading["kind"]): boolean {
+  return findPayloadValue(payload, matcher, kind) != null;
 }
 
 function emitReading(reading: EnvironmentReading): void {
@@ -237,7 +248,7 @@ export function recordMqttMessage(topic: string, payload: unknown): void {
   const settings = loadEnvironmentSettings();
   for (const kind of ["lux", "presence", "distance"] as const) {
     const matcher = settings[kind];
-    if (!matchesTopic(topic, matcher)) continue;
+    if (!matchesTopic(topic, matcher) && !hasPayloadMatch(payload, matcher, kind)) continue;
     const found = findPayloadValue(payload, matcher, kind);
     if (!found) continue;
     emitReading({
